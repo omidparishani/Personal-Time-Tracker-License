@@ -1,0 +1,61 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// کد فعال‌سازی یک‌بارمصرف (یا چندباره تا سقف)
+model ActivationCode {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  /// حداکثر تعداد دستگاه مجاز (پیش‌فرض ۱)
+  maxUses     Int       @default(1)
+  usedCount   Int       @default(0)
+  /// note داخلی ادمین (مثلاً نام همکار)
+  note        String?
+  /// آیا صدور کد هنوز معتبر است (قبل از فعال‌سازی)
+  enabled     Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime?
+  licenses    License[]
+}
+
+/// لایسنس فعال‌شده روی یک دستگاه
+model License {
+  id             String         @id @default(cuid())
+  /// توکن یکتای لایسنس که اپ ذخیره می‌کند
+  licenseKey     String         @unique
+  activationCode ActivationCode @relation(fields: [codeId], references: [id])
+  codeId         String
+  deviceId       String
+  deviceModel    String?
+  deviceBrand    String?
+  androidVersion String?
+  appVersion     String?
+  /// نام کاربری جیرا یا نامی که اپ می‌فرستد
+  username       String?
+  /// یادداشت ادمین
+  adminNote      String?
+  /// اگر false باشد اپ نباید کار کند
+  active         Boolean        @default(true)
+  activatedAt    DateTime       @default(now())
+  lastSeenAt     DateTime       @default(now())
+  disabledAt     DateTime?
+  disabledReason String?
+
+  @@index([deviceId])
+  @@index([active])
+  @@unique([codeId, deviceId])
+}
+
+/// لاگ رویدادها برای ادمین
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  detail    String?
+  ip        String?
+  createdAt DateTime @default(now())
+}

@@ -1,0 +1,8 @@
+node_modules
+.next
+.env
+.env.local
+*.log
+.vercel
+prisma/*.db
+prisma/*.db-journal
