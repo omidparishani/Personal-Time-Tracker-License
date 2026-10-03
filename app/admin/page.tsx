@@ -3,14 +3,37 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type LicenseBrief = {
+type Shift = {
   id: string;
-  active: boolean;
-  username: string | null;
+  name: string;
+  description: string | null;
+  startWorkTime: string;
+  endWorkTime: string;
+  flexibleMinutes: number;
+  minimumWorkMinutes: number;
+  weeklyRequiredMinutes: number;
+  thursdayWorking: boolean;
+  thursdayMinutes: number;
+  holidaysJson: string;
+  enabled: boolean;
+  _count?: { licenses: number };
+};
+
+type LicenseRow = {
+  id: string;
+  licenseKey: string;
   deviceModel: string | null;
-  deviceId: string;
-  activatedAt: string;
+  deviceBrand: string | null;
+  username: string | null;
+  active: boolean;
   lastSeenAt: string;
+  canJira: boolean;
+  canAttendance: boolean;
+  canReports: boolean;
+  canSupport: boolean;
+  shiftId: string | null;
+  shift: Shift | null;
+  activationCode: { code: string; note: string | null };
 };
 
 type CodeRow = {
@@ -21,27 +44,16 @@ type CodeRow = {
   note: string | null;
   enabled: boolean;
   createdAt: string;
-  expiresAt: string | null;
-  _count: { licenses: number };
-  licenses: LicenseBrief[];
 };
 
-type LicenseRow = {
-  id: string;
-  licenseKey: string;
-  deviceId: string;
-  deviceModel: string | null;
-  deviceBrand: string | null;
-  androidVersion: string | null;
-  appVersion: string | null;
+type ChatThread = {
+  licenseId: string;
   username: string | null;
-  active: boolean;
-  activatedAt: string;
-  lastSeenAt: string;
-  disabledReason: string | null;
-  adminNote: string | null;
-  activationCode: { code: string; note: string | null };
+  deviceModel: string | null;
+  unread: number;
 };
+
+type ChatMsg = { id: string; sender: string; body: string; createdAt: string };
 
 function fmt(d: string) {
   try {
@@ -51,33 +63,59 @@ function fmt(d: string) {
   }
 }
 
+const emptyShiftForm = {
+  name: "",
+  description: "",
+  startWorkTime: "09:00",
+  endWorkTime: "17:00",
+  flexibleMinutes: 120,
+  minimumWorkMinutes: 480,
+  weeklyRequiredMinutes: 2400,
+  thursdayWorking: false,
+  thursdayMinutes: 300,
+  holidays: "",
+};
+
 export default function AdminPage() {
   const router = useRouter();
-  const [tab, setTab] = useState<"codes" | "licenses">("codes");
+  const [tab, setTab] = useState<"codes" | "shifts" | "users" | "chat">("shifts");
   const [codes, setCodes] = useState<CodeRow[]>([]);
+  const [shifts, setShifts] = useState<Shift[]>([]);
   const [licenses, setLicenses] = useState<LicenseRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
   const [genCount, setGenCount] = useState(1);
   const [genNote, setGenNote] = useState("");
-  const [genMaxUses, setGenMaxUses] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [shiftForm, setShiftForm] = useState(emptyShiftForm);
+  const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
+  const [editUserId, setEditUserId] = useState<string | null>(null);
+  const [threads, setThreads] = useState<ChatThread[]>([]);
+  const [chatLicenseId, setChatLicenseId] = useState<string | null>(null);
+  const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [cRes, lRes] = await Promise.all([
+      const [cRes, sRes, lRes, chRes] = await Promise.all([
         fetch("/api/admin/codes"),
+        fetch("/api/admin/shifts"),
         fetch("/api/admin/licenses"),
+        fetch("/api/admin/chat"),
       ]);
-      if (cRes.status === 401 || lRes.status === 401) {
+      if ([cRes, sRes, lRes].some((r) => r.status === 401)) {
         router.push("/login");
         return;
       }
-      const cData = await cRes.json();
-      const lData = await lRes.json();
-      if (cData.ok) setCodes(cData.codes);
-      if (lData.ok) setLicenses(lData.licenses);
+      const c = await cRes.json();
+      const s = await sRes.json();
+      const l = await lRes.json();
+      const ch = await chRes.json();
+      if (c.ok) setCodes(c.codes);
+      if (s.ok) setShifts(s.shifts);
+      if (l.ok) setLicenses(l.licenses);
+      if (ch.ok) setThreads(ch.threads || []);
     } finally {
       setLoading(false);
     }
@@ -94,18 +132,14 @@ export default function AdminPage() {
       const res = await fetch("/api/admin/codes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          count: genCount,
-          maxUses: genMaxUses,
-          note: genNote || undefined,
-        }),
+        body: JSON.stringify({ count: genCount, maxUses: 1, note: genNote || undefined }),
       });
       const data = await res.json();
       if (!data.ok) {
         setMsg(data.error || "خطا");
         return;
       }
-      setMsg(`کدهای ساخته‌شده: ${(data.codes as string[]).join(" ، ")}`);
+      setMsg("کدها: " + (data.codes as string[]).join(" ، "));
       setGenNote("");
       await load();
     } finally {
@@ -113,25 +147,104 @@ export default function AdminPage() {
     }
   }
 
-  async function toggleCode(id: string, enabled: boolean) {
-    await fetch("/api/admin/codes", {
-      method: "PATCH",
+  async function saveShift() {
+    if (!shiftForm.name.trim()) {
+      setMsg("نام شیفت لازم است");
+      return;
+    }
+    setBusy(true);
+    try {
+      const holidaysArr = shiftForm.holidays
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const payload = {
+        name: shiftForm.name.trim(),
+        description: shiftForm.description || undefined,
+        startWorkTime: shiftForm.startWorkTime,
+        endWorkTime: shiftForm.endWorkTime,
+        flexibleMinutes: Number(shiftForm.flexibleMinutes),
+        minimumWorkMinutes: Number(shiftForm.minimumWorkMinutes),
+        weeklyRequiredMinutes: Number(shiftForm.weeklyRequiredMinutes),
+        thursdayWorking: shiftForm.thursdayWorking,
+        thursdayMinutes: Number(shiftForm.thursdayMinutes),
+        holidaysJson: JSON.stringify(holidaysArr),
+      };
+      const res = await fetch("/api/admin/shifts", {
+        method: editingShiftId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editingShiftId ? { id: editingShiftId, ...payload } : payload),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setMsg(data.error || "خطا");
+        return;
+      }
+      setMsg(editingShiftId ? "شیفت به‌روز شد" : "شیفت ساخته شد");
+      setShiftForm(emptyShiftForm);
+      setEditingShiftId(null);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startEditShift(s: Shift) {
+    setEditingShiftId(s.id);
+    let holidays = "";
+    try {
+      holidays = JSON.parse(s.holidaysJson || "[]").join(",");
+    } catch {}
+    setShiftForm({
+      name: s.name,
+      description: s.description || "",
+      startWorkTime: s.startWorkTime,
+      endWorkTime: s.endWorkTime,
+      flexibleMinutes: s.flexibleMinutes,
+      minimumWorkMinutes: s.minimumWorkMinutes,
+      weeklyRequiredMinutes: s.weeklyRequiredMinutes,
+      thursdayWorking: s.thursdayWorking,
+      thursdayMinutes: s.thursdayMinutes,
+      holidays,
+    });
+    setTab("shifts");
+  }
+
+  async function deleteShift(id: string) {
+    if (!confirm("حذف این شیفت؟ کارمندان از آن جدا می‌شوند.")) return;
+    await fetch("/api/admin/shifts", {
+      method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, enabled }),
+      body: JSON.stringify({ id }),
     });
     await load();
   }
 
-  async function toggleLicense(id: string, active: boolean) {
-    const reason = active
-      ? undefined
-      : window.prompt("دلیل غیرفعال‌سازی (اختیاری):") || "غیرفعال توسط مدیر";
+  async function patchLicense(id: string, body: Record<string, unknown>) {
     await fetch("/api/admin/licenses", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, active, disabledReason: reason }),
+      body: JSON.stringify({ id, ...body }),
     });
     await load();
+  }
+
+  async function openChat(licenseId: string) {
+    setChatLicenseId(licenseId);
+    const res = await fetch(`/api/admin/chat?licenseId=${licenseId}`);
+    const data = await res.json();
+    if (data.ok) setChatMsgs(data.messages);
+  }
+
+  async function sendChat() {
+    if (!chatLicenseId || !chatInput.trim()) return;
+    await fetch("/api/admin/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ licenseId: chatLicenseId, body: chatInput.trim() }),
+    });
+    setChatInput("");
+    await openChat(chatLicenseId);
   }
 
   async function logout() {
@@ -139,249 +252,457 @@ export default function AdminPage() {
     router.push("/login");
   }
 
-  function copy(text: string) {
-    navigator.clipboard.writeText(text);
-    setMsg(`کپی شد: ${text}`);
-  }
-
-  const activeCount = licenses.filter((l) => l.active).length;
-  const disabledCount = licenses.filter((l) => !l.active).length;
-  const unusedCodes = codes.filter((c) => c.usedCount === 0 && c.enabled).length;
+  const editUser = licenses.find((l) => l.id === editUserId);
 
   return (
-    <div className="min-h-screen">
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4">
+    <div className="min-h-screen bg-slate-50">
+      <header className="bg-[#1565C0] text-white sticky top-0 z-10 shadow">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-bold text-slate-800">مدیریت لایسنس PTT</h1>
-            <p className="text-xs text-slate-500">صدور کد · کنترل دستگاه · غیرفعال‌سازی</p>
+            <h1 className="text-lg font-bold">مدیریت لایسنس PTT</h1>
+            <p className="text-xs text-blue-100">شیفت · کاربر · کد · پشتیبانی</p>
           </div>
-          <button
-            onClick={logout}
-            className="text-sm px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50"
-          >
+          <button onClick={logout} className="text-sm px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25">
             خروج
           </button>
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            { label: "کدهای استفاده‌نشده", value: unusedCodes, color: "text-brand-600" },
-            { label: "کل کدها", value: codes.length, color: "text-slate-700" },
-            { label: "لایسنس فعال", value: activeCount, color: "text-emerald-600" },
-            { label: "غیرفعال", value: disabledCount, color: "text-red-600" },
-          ].map((s) => (
-            <div key={s.label} className="bg-white rounded-xl border border-slate-100 p-4 shadow-sm">
-              <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
-              <div className="text-xs text-slate-500 mt-1">{s.label}</div>
-            </div>
-          ))}
-        </div>
-
         {msg && (
-          <div className="bg-brand-50 text-brand-700 text-sm rounded-xl px-4 py-3 border border-brand-100">
+          <div className="bg-blue-50 text-blue-800 text-sm rounded-xl px-4 py-3 border border-blue-100">
             {msg}
           </div>
         )}
 
-        {/* Generate */}
-        <section className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
-          <h2 className="font-semibold text-slate-800 mb-4">صدور کد فعال‌سازی</h2>
-          <div className="flex flex-wrap gap-3 items-end">
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">تعداد</label>
-              <input
-                type="number"
-                min={1}
-                max={50}
-                value={genCount}
-                onChange={(e) => setGenCount(Number(e.target.value) || 1)}
-                className="w-24 rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">حداکثر دستگاه</label>
-              <input
-                type="number"
-                min={1}
-                max={20}
-                value={genMaxUses}
-                onChange={(e) => setGenMaxUses(Number(e.target.value) || 1)}
-                className="w-24 rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="flex-1 min-w-[180px]">
-              <label className="text-xs text-slate-500 block mb-1">یادداشت (نام همکار)</label>
-              <input
-                value={genNote}
-                onChange={(e) => setGenNote(e.target.value)}
-                placeholder="مثلاً: علی احمدی"
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              />
-            </div>
-            <button
-              onClick={generateCodes}
-              disabled={busy}
-              className="rounded-xl bg-brand-500 hover:bg-brand-600 text-white px-5 py-2.5 text-sm font-medium disabled:opacity-60"
-            >
-              {busy ? "…" : "ساخت کد"}
-            </button>
-          </div>
-        </section>
-
-        {/* Tabs */}
-        <div className="flex gap-2 border-b border-slate-200">
+        <div className="flex flex-wrap gap-2 border-b border-slate-200">
           {(
             [
-              ["codes", "کدها"],
-              ["licenses", "لایسنس‌ها / دستگاه‌ها"],
+              ["shifts", "شیفت‌ها"],
+              ["users", "کارمندان"],
+              ["codes", "کد فعال‌سازی"],
+              ["chat", "پشتیبانی"],
             ] as const
           ).map(([k, label]) => (
             <button
               key={k}
               onClick={() => setTab(k)}
-              className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
-                tab === k
-                  ? "border-brand-500 text-brand-600"
-                  : "border-transparent text-slate-500 hover:text-slate-700"
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${
+                tab === k ? "border-[#1565C0] text-[#1565C0]" : "border-transparent text-slate-500"
               }`}
             >
               {label}
             </button>
           ))}
-          <button
-            onClick={load}
-            className="mr-auto text-xs text-slate-500 hover:text-brand-600 px-2"
-          >
-            ↻ بروزرسانی
+          <button onClick={load} className="mr-auto text-xs text-slate-500 px-2">
+            ↻
           </button>
         </div>
 
         {loading ? (
-          <p className="text-sm text-slate-500 py-8 text-center">در حال بارگذاری…</p>
-        ) : tab === "codes" ? (
-          <div className="space-y-3">
-            {codes.length === 0 && (
-              <p className="text-sm text-slate-500 text-center py-8">هنوز کدی ساخته نشده</p>
-            )}
-            {codes.map((c) => (
-              <div
-                key={c.id}
-                className="bg-white rounded-xl border border-slate-100 p-4 shadow-sm"
-              >
-                <div className="flex flex-wrap items-center gap-3 justify-between">
-                  <div>
-                    <button
-                      onClick={() => copy(c.code)}
-                      className="font-mono text-base font-bold text-brand-600 hover:underline tracking-wide"
-                      title="کپی"
-                    >
-                      {c.code}
-                    </button>
-                    <div className="text-xs text-slate-500 mt-1">
-                      {c.note && <span className="ml-2">یادداشت: {c.note}</span>}
-                      <span>
-                        استفاده: {c.usedCount}/{c.maxUses}
-                      </span>
-                      <span className="mx-2">·</span>
-                      <span>{fmt(c.createdAt)}</span>
-                      {!c.enabled && (
-                        <span className="mr-2 text-red-600 font-medium">غیرفعال</span>
+          <p className="text-center text-slate-400 py-8">بارگذاری…</p>
+        ) : tab === "shifts" ? (
+          <div className="grid md:grid-cols-2 gap-6">
+            <section className="bg-white rounded-2xl border shadow-sm p-5 space-y-3">
+              <h2 className="font-semibold">{editingShiftId ? "ویرایش شیفت" : "ایجاد شیفت جدید"}</h2>
+              <p className="text-xs text-slate-500">
+                مثال: «پنج‌شنبه تعطیل + ۲ ساعت شناوری» — بعد هر کارمند را به این شیفت وصل کنید.
+              </p>
+              <input
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+                placeholder="نام شیفت *"
+                value={shiftForm.name}
+                onChange={(e) => setShiftForm({ ...shiftForm, name: e.target.value })}
+              />
+              <input
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+                placeholder="توضیح"
+                value={shiftForm.description}
+                onChange={(e) => setShiftForm({ ...shiftForm, description: e.target.value })}
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-slate-500">شروع</label>
+                  <input
+                    type="time"
+                    className="w-full border rounded-lg px-2 py-1.5 text-sm"
+                    value={shiftForm.startWorkTime}
+                    onChange={(e) => setShiftForm({ ...shiftForm, startWorkTime: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">پایان</label>
+                  <input
+                    type="time"
+                    className="w-full border rounded-lg px-2 py-1.5 text-sm"
+                    value={shiftForm.endWorkTime}
+                    onChange={(e) => setShiftForm({ ...shiftForm, endWorkTime: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">شناوری (دقیقه)</label>
+                  <input
+                    type="number"
+                    className="w-full border rounded-lg px-2 py-1.5 text-sm"
+                    value={shiftForm.flexibleMinutes}
+                    onChange={(e) =>
+                      setShiftForm({ ...shiftForm, flexibleMinutes: Number(e.target.value) })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">حداقل روزانه (دقیقه)</label>
+                  <input
+                    type="number"
+                    className="w-full border rounded-lg px-2 py-1.5 text-sm"
+                    value={shiftForm.minimumWorkMinutes}
+                    onChange={(e) =>
+                      setShiftForm({ ...shiftForm, minimumWorkMinutes: Number(e.target.value) })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">حداقل هفتگی (دقیقه)</label>
+                  <input
+                    type="number"
+                    className="w-full border rounded-lg px-2 py-1.5 text-sm"
+                    value={shiftForm.weeklyRequiredMinutes}
+                    onChange={(e) =>
+                      setShiftForm({ ...shiftForm, weeklyRequiredMinutes: Number(e.target.value) })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">ساعات پنج‌شنبه (دقیقه)</label>
+                  <input
+                    type="number"
+                    className="w-full border rounded-lg px-2 py-1.5 text-sm"
+                    value={shiftForm.thursdayMinutes}
+                    disabled={!shiftForm.thursdayWorking}
+                    onChange={(e) =>
+                      setShiftForm({ ...shiftForm, thursdayMinutes: Number(e.target.value) })
+                    }
+                  />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={shiftForm.thursdayWorking}
+                  onChange={(e) => setShiftForm({ ...shiftForm, thursdayWorking: e.target.checked })}
+                />
+                پنج‌شنبه کاری است
+              </label>
+              <div>
+                <label className="text-xs text-slate-500">تعطیلات (میلادی با کاما)</label>
+                <input
+                  className="w-full border rounded-lg px-2 py-1.5 text-sm"
+                  placeholder="2026-03-20,2026-03-21"
+                  value={shiftForm.holidays}
+                  onChange={(e) => setShiftForm({ ...shiftForm, holidays: e.target.value })}
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={saveShift}
+                  disabled={busy}
+                  className="flex-1 rounded-xl bg-[#1565C0] text-white py-2.5 text-sm font-medium disabled:opacity-60"
+                >
+                  {editingShiftId ? "ذخیره تغییرات" : "ایجاد شیفت"}
+                </button>
+                {editingShiftId && (
+                  <button
+                    onClick={() => {
+                      setEditingShiftId(null);
+                      setShiftForm(emptyShiftForm);
+                    }}
+                    className="rounded-xl border px-4 text-sm"
+                  >
+                    انصراف
+                  </button>
+                )}
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="font-semibold">لیست شیفت‌ها</h2>
+              {shifts.length === 0 && (
+                <p className="text-sm text-slate-400 bg-white rounded-xl border p-6 text-center">
+                  هنوز شیفتی نساخته‌اید
+                </p>
+              )}
+              {shifts.map((s) => (
+                <div key={s.id} className="bg-white rounded-xl border p-4 shadow-sm">
+                  <div className="flex justify-between gap-2">
+                    <div>
+                      <div className="font-medium">{s.name}</div>
+                      <div className="text-xs text-slate-500 mt-1">
+                        {s.startWorkTime}–{s.endWorkTime} · شناوری {s.flexibleMinutes}د
+                        {" · "}
+                        {s.thursdayWorking ? `پنج‌شنبه ${s.thursdayMinutes}د` : "پنج‌شنبه تعطیل"}
+                        {" · "}
+                        {s._count?.licenses ?? 0} نفر
+                      </div>
+                      {s.description && (
+                        <div className="text-xs text-slate-400 mt-0.5">{s.description}</div>
                       )}
                     </div>
+                    <div className="flex flex-col gap-1">
+                      <button
+                        onClick={() => startEditShift(s)}
+                        className="text-xs px-2 py-1 rounded border text-blue-700"
+                      >
+                        ویرایش
+                      </button>
+                      <button
+                        onClick={() => deleteShift(s.id)}
+                        className="text-xs px-2 py-1 rounded border text-red-600"
+                      >
+                        حذف
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    onClick={() => toggleCode(c.id, !c.enabled)}
-                    className={`text-xs px-3 py-1.5 rounded-lg border ${
-                      c.enabled
-                        ? "border-red-200 text-red-600 hover:bg-red-50"
-                        : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-                    }`}
-                  >
-                    {c.enabled ? "غیرفعال کردن کد" : "فعال کردن کد"}
-                  </button>
                 </div>
-                {c.licenses.length > 0 && (
-                  <div className="mt-3 pt-3 border-t border-slate-50 space-y-1">
-                    {c.licenses.map((l) => (
-                      <div key={l.id} className="text-xs text-slate-600 flex gap-2 flex-wrap">
-                        <span className={l.active ? "text-emerald-600" : "text-red-500"}>
-                          {l.active ? "● فعال" : "● قطع"}
+              ))}
+            </section>
+          </div>
+        ) : tab === "users" ? (
+          <div className="space-y-3">
+            {licenses.map((l) => (
+              <div key={l.id} className="bg-white rounded-xl border p-4 shadow-sm">
+                <div className="flex flex-wrap justify-between gap-2 items-start">
+                  <div>
+                    <div className="font-medium">
+                      {l.username || "بدون نام"}{" "}
+                      <span className={`text-xs ${l.active ? "text-emerald-600" : "text-red-600"}`}>
+                        {l.active ? "فعال" : "قطع"}
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      {[l.deviceBrand, l.deviceModel].filter(Boolean).join(" ")} · کد{" "}
+                      {l.activationCode.code}
+                    </div>
+                    <div className="text-xs text-slate-600 mt-1">
+                      شیفت: <strong>{l.shift?.name || "— تعیین نشده —"}</strong>
+                      {l.shift && (
+                        <span className="text-slate-400">
+                          {" "}
+                          ({l.shift.startWorkTime}–{l.shift.endWorkTime} · شناوری{" "}
+                          {l.shift.flexibleMinutes}د)
                         </span>
-                        <span>{l.username || "—"}</span>
-                        <span className="text-slate-400">{l.deviceModel || l.deviceId.slice(0, 12)}</span>
-                        <span className="text-slate-400">آخرین بازدید: {fmt(l.lastSeenAt)}</span>
-                      </div>
-                    ))}
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Jira {l.canJira ? "✓" : "✗"} · تردد {l.canAttendance ? "✓" : "✗"} · پشتیبانی{" "}
+                      {l.canSupport ? "✓" : "✗"}
+                    </div>
                   </div>
-                )}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setEditUserId(l.id)}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-blue-200 text-blue-700"
+                    >
+                      تنظیمات
+                    </button>
+                    <button
+                      onClick={() =>
+                        patchLicense(l.id, {
+                          active: !l.active,
+                          disabledReason: l.active ? "قطع توسط مدیر" : undefined,
+                        })
+                      }
+                      className={`text-xs px-3 py-1.5 rounded-lg border ${
+                        l.active ? "border-red-200 text-red-600" : "border-emerald-200 text-emerald-700"
+                      }`}
+                    >
+                      {l.active ? "قطع" : "فعال"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {licenses.length === 0 && (
+              <p className="text-center text-slate-400 py-8">هنوز کاربری فعال نشده</p>
+            )}
+          </div>
+        ) : tab === "codes" ? (
+          <div className="space-y-4">
+            <section className="bg-white rounded-2xl border p-5 flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">تعداد</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={genCount}
+                  onChange={(e) => setGenCount(Number(e.target.value) || 1)}
+                  className="w-24 rounded-lg border px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="flex-1 min-w-[160px]">
+                <label className="text-xs text-slate-500 block mb-1">یادداشت</label>
+                <input
+                  value={genNote}
+                  onChange={(e) => setGenNote(e.target.value)}
+                  placeholder="نام همکار"
+                  className="w-full rounded-lg border px-3 py-2 text-sm"
+                />
+              </div>
+              <button
+                onClick={generateCodes}
+                disabled={busy}
+                className="rounded-xl bg-[#1565C0] text-white px-5 py-2.5 text-sm"
+              >
+                ساخت کد
+              </button>
+            </section>
+            {codes.map((c) => (
+              <div key={c.id} className="bg-white rounded-xl border p-4 flex justify-between">
+                <button
+                  className="font-mono font-bold text-[#1565C0]"
+                  onClick={() => {
+                    navigator.clipboard.writeText(c.code);
+                    setMsg("کپی: " + c.code);
+                  }}
+                >
+                  {c.code}
+                </button>
+                <span className="text-xs text-slate-500">
+                  {c.usedCount}/{c.maxUses} · {c.note || "—"} · {fmt(c.createdAt)}
+                </span>
               </div>
             ))}
           </div>
         ) : (
-          <div className="overflow-x-auto bg-white rounded-xl border border-slate-100 shadow-sm">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600 text-xs">
-                <tr>
-                  <th className="text-right px-4 py-3 font-medium">کاربر / دستگاه</th>
-                  <th className="text-right px-4 py-3 font-medium">کد</th>
-                  <th className="text-right px-4 py-3 font-medium">وضعیت</th>
-                  <th className="text-right px-4 py-3 font-medium">آخرین بازدید</th>
-                  <th className="text-right px-4 py-3 font-medium">عملیات</th>
-                </tr>
-              </thead>
-              <tbody>
-                {licenses.map((l) => (
-                  <tr key={l.id} className="border-t border-slate-50">
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{l.username || "بدون نام"}</div>
-                      <div className="text-xs text-slate-400">
-                        {[l.deviceBrand, l.deviceModel].filter(Boolean).join(" ") || l.deviceId}
-                        {l.androidVersion ? ` · Android ${l.androidVersion}` : ""}
-                        {l.appVersion ? ` · v${l.appVersion}` : ""}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs">{l.activationCode.code}</td>
-                    <td className="px-4 py-3">
-                      {l.active ? (
-                        <span className="text-emerald-600 text-xs font-medium">فعال</span>
-                      ) : (
-                        <span className="text-red-600 text-xs font-medium">
-                          غیرفعال
-                          {l.disabledReason ? ` — ${l.disabledReason}` : ""}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{fmt(l.lastSeenAt)}</td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => toggleLicense(l.id, !l.active)}
-                        className={`text-xs px-3 py-1.5 rounded-lg border ${
-                          l.active
-                            ? "border-red-200 text-red-600 hover:bg-red-50"
-                            : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+          <div className="grid md:grid-cols-3 gap-4 min-h-[420px]">
+            <div className="bg-white rounded-xl border overflow-hidden">
+              <div className="px-3 py-2 border-b text-sm font-medium bg-slate-50">گفتگوها</div>
+              {threads.map((t) => (
+                <button
+                  key={t.licenseId}
+                  onClick={() => openChat(t.licenseId)}
+                  className={`w-full text-right px-3 py-2.5 border-b text-sm hover:bg-slate-50 ${
+                    chatLicenseId === t.licenseId ? "bg-blue-50" : ""
+                  }`}
+                >
+                  {t.username || "کاربر"}{" "}
+                  {t.unread > 0 && <span className="text-red-500 text-xs">({t.unread})</span>}
+                </button>
+              ))}
+            </div>
+            <div className="md:col-span-2 bg-white rounded-xl border flex flex-col">
+              {!chatLicenseId ? (
+                <p className="m-auto text-slate-400 text-sm">یک گفتگو انتخاب کنید</p>
+              ) : (
+                <>
+                  <div className="flex-1 overflow-y-auto p-4 space-y-2 max-h-[360px]">
+                    {chatMsgs.map((m) => (
+                      <div
+                        key={m.id}
+                        className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${
+                          m.sender === "admin"
+                            ? "mr-auto bg-[#1565C0] text-white"
+                            : "ml-auto bg-slate-100"
                         }`}
                       >
-                        {l.active ? "قطع دسترسی" : "فعال‌سازی مجدد"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {licenses.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
-                      هنوز فعالی ثبت نشده
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                        {m.body}
+                        <div
+                          className={`text-[10px] mt-1 ${
+                            m.sender === "admin" ? "text-blue-100" : "text-slate-400"
+                          }`}
+                        >
+                          {fmt(m.createdAt)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="p-3 border-t flex gap-2">
+                    <input
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && sendChat()}
+                      placeholder="پاسخ…"
+                      className="flex-1 rounded-xl border px-3 py-2 text-sm"
+                    />
+                    <button
+                      onClick={sendChat}
+                      className="rounded-xl bg-[#1565C0] text-white px-4 py-2 text-sm"
+                    >
+                      ارسال
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
       </main>
+
+      {editUser && (
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+          onClick={() => setEditUserId(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full p-5 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-bold text-lg">تنظیمات {editUser.username || "کاربر"}</h3>
+
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">شیفت کاری</label>
+              <select
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+                value={editUser.shiftId || ""}
+                onChange={(e) =>
+                  patchLicense(editUser.id, {
+                    shiftId: e.target.value || null,
+                  })
+                }
+              >
+                <option value="">— بدون شیفت —</option>
+                {shifts.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.startWorkTime}–{s.endWorkTime}
+                    {!s.thursdayWorking ? " · پنج‌شنبه تعطیل" : ""} · شناوری {s.flexibleMinutes}د)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              {(
+                [
+                  ["canJira", "دسترسی Jira"],
+                  ["canAttendance", "دسترسی تردد"],
+                  ["canReports", "گزارشات"],
+                  ["canSupport", "پشتیبانی"],
+                ] as const
+              ).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-2 border rounded-lg px-3 py-2">
+                  <input
+                    type="checkbox"
+                    defaultChecked={(editUser as any)[key]}
+                    onChange={(e) => patchLicense(editUser.id, { [key]: e.target.checked })}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+
+            <p className="text-xs text-slate-400">
+              ساعت کاری و شناوری از شیفت انتخاب‌شده به اپ می‌رسد. کاربر فقط تم و اعلان را تنظیم
+              می‌کند.
+            </p>
+            <button
+              onClick={() => setEditUserId(null)}
+              className="w-full rounded-xl bg-slate-100 py-2.5 text-sm"
+            >
+              بستن
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

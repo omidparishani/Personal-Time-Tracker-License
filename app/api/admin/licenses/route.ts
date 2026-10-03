@@ -11,6 +11,7 @@ export async function GET() {
     orderBy: { activatedAt: "desc" },
     include: {
       activationCode: { select: { code: true, note: true } },
+      shift: true,
     },
   });
   return jsonOk({ licenses });
@@ -18,34 +19,45 @@ export async function GET() {
 
 const patchSchema = z.object({
   id: z.string(),
-  active: z.boolean(),
+  active: z.boolean().optional(),
   disabledReason: z.string().max(300).optional(),
   adminNote: z.string().max(200).optional(),
+  canJira: z.boolean().optional(),
+  canAttendance: z.boolean().optional(),
+  canReports: z.boolean().optional(),
+  canSupport: z.boolean().optional(),
+  shiftId: z.string().nullable().optional(),
 });
 
-/** فعال / غیرفعال کردن لایسنس یک کاربر */
 export async function PATCH(req: Request) {
   if (!(await isAdminAuthenticated())) return jsonErr("غیرمجاز", 401);
   try {
     const body = patchSchema.parse(await req.json());
+    const { id, ...rest } = body;
+    const data: Record<string, unknown> = { ...rest };
+    if (rest.active === false) {
+      data.disabledAt = new Date();
+      data.disabledReason = rest.disabledReason || "غیرفعال توسط مدیر";
+    }
+    if (rest.active === true) {
+      data.disabledAt = null;
+      data.disabledReason = null;
+    }
     const updated = await prisma.license.update({
-      where: { id: body.id },
-      data: {
-        active: body.active,
-        disabledAt: body.active ? null : new Date(),
-        disabledReason: body.active ? null : body.disabledReason || "غیرفعال توسط مدیر",
-        adminNote: body.adminNote,
-      },
+      where: { id },
+      data,
+      include: { shift: true },
     });
     await prisma.auditLog.create({
       data: {
-        action: body.active ? "license_enable" : "license_disable",
-        detail: `${updated.licenseKey.slice(0, 12)}… ${updated.username || updated.deviceId}`,
+        action: "license_update",
+        detail: `${updated.licenseKey.slice(0, 12)}…`,
         ip: clientIp(req),
       },
     });
     return jsonOk({ license: updated });
-  } catch {
+  } catch (e) {
+    console.error(e);
     return jsonErr("به‌روزرسانی ناموفق", 400);
   }
 }

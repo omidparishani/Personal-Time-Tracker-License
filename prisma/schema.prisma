@@ -7,26 +7,41 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// کد فعال‌سازی یک‌بارمصرف (یا چندباره تا سقف)
 model ActivationCode {
-  id          String    @id @default(cuid())
-  code        String    @unique
-  /// حداکثر تعداد دستگاه مجاز (پیش‌فرض ۱)
-  maxUses     Int       @default(1)
-  usedCount   Int       @default(0)
-  /// note داخلی ادمین (مثلاً نام همکار)
-  note        String?
-  /// آیا صدور کد هنوز معتبر است (قبل از فعال‌سازی)
-  enabled     Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  expiresAt   DateTime?
-  licenses    License[]
+  id        String    @id @default(cuid())
+  code      String    @unique
+  maxUses   Int       @default(1)
+  usedCount Int       @default(0)
+  note      String?
+  enabled   Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+  licenses  License[]
 }
 
-/// لایسنس فعال‌شده روی یک دستگاه
+/// قالب شیفت کاری — در پنل ساخته می‌شود و به کارمند وصل می‌شود
+model Shift {
+  id                    String    @id @default(cuid())
+  name                  String
+  /// توضیح اختیاری
+  description           String?
+  startWorkTime         String    @default("09:00")
+  endWorkTime           String    @default("17:00")
+  /// شناوری (دقیقه)
+  flexibleMinutes       Int       @default(30)
+  minimumWorkMinutes    Int       @default(480)
+  weeklyRequiredMinutes Int       @default(2775)
+  thursdayWorking       Boolean   @default(false)
+  thursdayMinutes       Int       @default(300)
+  /// JSON تاریخ‌های تعطیل مشترک این شیفت
+  holidaysJson          String    @default("[]")
+  enabled               Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+  licenses              License[]
+}
+
 model License {
   id             String         @id @default(cuid())
-  /// توکن یکتای لایسنس که اپ ذخیره می‌کند
   licenseKey     String         @unique
   activationCode ActivationCode @relation(fields: [codeId], references: [id])
   codeId         String
@@ -35,23 +50,54 @@ model License {
   deviceBrand    String?
   androidVersion String?
   appVersion     String?
-  /// نام کاربری جیرا یا نامی که اپ می‌فرستد
   username       String?
-  /// یادداشت ادمین
   adminNote      String?
-  /// اگر false باشد اپ نباید کار کند
   active         Boolean        @default(true)
   activatedAt    DateTime       @default(now())
   lastSeenAt     DateTime       @default(now())
   disabledAt     DateTime?
   disabledReason String?
 
+  canJira        Boolean        @default(true)
+  canAttendance  Boolean        @default(true)
+  canReports     Boolean        @default(true)
+  canSupport     Boolean        @default(true)
+
+  /// اتصال به قالب شیفت (اولویت با شیفت است)
+  shiftId        String?
+  shift          Shift?         @relation(fields: [shiftId], references: [id])
+
+  /// مقادیر قدیمی — فقط اگر shiftId خالی باشد استفاده می‌شوند
+  startWorkTime  String         @default("09:00")
+  endWorkTime    String         @default("17:00")
+  flexibleMinutes Int           @default(30)
+  minimumWorkMinutes Int        @default(480)
+  weeklyRequiredMinutes Int     @default(2775)
+  thursdayWorking Boolean       @default(false)
+  thursdayMinutes Int           @default(300)
+  holidaysJson   String         @default("[]")
+
+  messages       ChatMessage[]
+
   @@index([deviceId])
   @@index([active])
+  @@index([shiftId])
   @@unique([codeId, deviceId])
 }
 
-/// لاگ رویدادها برای ادمین
+model ChatMessage {
+  id          String   @id @default(cuid())
+  licenseId   String
+  license     License  @relation(fields: [licenseId], references: [id], onDelete: Cascade)
+  sender      String
+  body        String
+  readByAdmin Boolean  @default(false)
+  readByUser  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([licenseId, createdAt])
+}
+
 model AuditLog {
   id        String   @id @default(cuid())
   action    String
