@@ -306,7 +306,7 @@ export default function AdminPage() {
             <section className="bg-white rounded-2xl border shadow-sm p-5 space-y-3">
               <h2 className="font-semibold">{editingShiftId ? "ویرایش شیفت" : "ایجاد شیفت جدید"}</h2>
               <p className="text-xs text-slate-500">
-                مثال: «پنج‌شنبه تعطیل + ۲ ساعت شناوری» — بعد هر کارمند را به این شیفت وصل کنید.
+                مثال پنج‌شنبه تعطیل: روزانه ۹:۱۵ ← هفتگی ۲۷۷۵ دقیقه (۵×۵۵۵)، شناوری ۱۲۰. پنج‌شنبه ۵ ساعت: تیک پنج‌شنبه + ۳۰۰ دقیقه.
               </p>
               <input
                 className="w-full border rounded-lg px-3 py-2 text-sm"
