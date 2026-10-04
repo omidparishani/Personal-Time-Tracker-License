@@ -1,13 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { jsonErr, jsonOk } from "@/lib/api";
-import { requireAdmin } from "@/lib/auth";
+import { isAdminAuthenticated } from "@/lib/auth";
 import { z } from "zod";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  const admin = await requireAdmin(req);
-  if (!admin) return jsonErr("غیرمجاز", 401);
+  if (!(await isAdminAuthenticated())) return jsonErr("غیرمجاز", 401);
 
   const url = new URL(req.url);
   const licenseId = url.searchParams.get("licenseId");
@@ -67,8 +66,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const admin = await requireAdmin(req);
-  if (!admin) return jsonErr("غیرمجاز", 401);
+  if (!(await isAdminAuthenticated())) return jsonErr("غیرمجاز", 401);
 
   const body = await req.json();
   const schema = z.object({
@@ -112,8 +110,7 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  const admin = await requireAdmin(req);
-  if (!admin) return jsonErr("غیرمجاز", 401);
+  if (!(await isAdminAuthenticated())) return jsonErr("غیرمجاز", 401);
   const body = await req.json();
   if (body.all) {
     await prisma.chatMessage.deleteMany({});
