@@ -98,6 +98,10 @@ export default function AdminPage() {
   const [directThreads, setDirectThreads] = useState<any[]>([]);
   const [holidaysList, setHolidaysList] = useState<any[]>([]);
   const [holidayYear, setHolidayYear] = useState(1404);
+  const [holidayEndpoint, setHolidayEndpoint] = useState(
+    "https://raw.githubusercontent.com/hasan-ahani/shamsi-holidays/main/holidays"
+  );
+
 
 
 
@@ -617,8 +621,19 @@ export default function AdminPage() {
             <section className="bg-white rounded-2xl border p-5 space-y-3">
               <h3 className="font-bold text-sm">همگام‌سازی تعطیلات رسمی</h3>
               <p className="text-xs text-slate-500">
-                منبع پیش‌فرض: hasan-ahani/shamsi-holidays (GitHub)
+                آدرس پایه یا فایل JSON را وارد کنید. اگر پایه باشد، با سال شمسی ترکیب می‌شود
+                (مثلاً .../holidays + /1404.json).
               </p>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">آدرس endpoint / URL</label>
+                <input
+                  value={holidayEndpoint}
+                  onChange={(e) => setHolidayEndpoint(e.target.value)}
+                  placeholder="https://raw.githubusercontent.com/.../holidays"
+                  className="w-full rounded-lg border px-3 py-2 text-sm font-mono"
+                  dir="ltr"
+                />
+              </div>
               <div className="flex gap-2 items-end flex-wrap">
                 <div>
                   <label className="text-xs text-slate-500 block mb-1">سال شمسی</label>
@@ -635,10 +650,13 @@ export default function AdminPage() {
                     const res = await fetch("/api/admin/holidays", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ syncYear: holidayYear }),
+                      body: JSON.stringify({
+                        syncYear: holidayYear,
+                        endpointUrl: holidayEndpoint.trim() || undefined,
+                      }),
                     });
                     const d = await res.json();
-                    setMsg(d.ok ? `همگام شد: ${d.added} روز` : d.error || "خطا");
+                    setMsg(d.ok ? `همگام شد: ${d.added} روز از ${d.source}` : d.error || "خطا");
                     await load();
                   }}
                 >
@@ -727,29 +745,38 @@ export default function AdminPage() {
                   }}
                 >
                   {c.code}
-                    <span className="ml-2 space-x-1 space-x-reverse">
+                    <div className="flex flex-wrap gap-2 mt-2">
                       <button
-                        className="text-xs text-blue-600"
+                        className="text-xs px-3 py-1.5 rounded-lg border border-blue-200 text-blue-700 bg-blue-50"
                         onClick={() => {
                           const note = prompt("یادداشت", c.note || "");
                           if (note === null) return;
                           const maxUses = prompt("حداکثر استفاده", String(c.maxUses || 1));
                           if (maxUses === null) return;
-                          patchCode(c.id, { note, maxUses: Number(maxUses) || 1 });
+                          const codeVal = prompt("مقدار کد (اختیاری)", c.code);
+                          if (codeVal === null) return;
+                          patchCode(c.id, {
+                            note,
+                            maxUses: Number(maxUses) || 1,
+                            code: codeVal.trim() || undefined,
+                          });
                         }}
                       >
-                        ویرایش
-                      </button>
-                      <button className="text-xs text-red-600" onClick={() => deleteCode(c.id)}>
-                        حذف
+                        ✎ ویرایش
                       </button>
                       <button
-                        className="text-xs text-slate-600"
+                        className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700"
                         onClick={() => patchCode(c.id, { enabled: !c.enabled })}
                       >
-                        {c.enabled ? "غیرفعال" : "فعال"}
+                        {c.enabled ? "⏸ غیرفعال" : "▶ فعال"}
                       </button>
-                    </span>
+                      <button
+                        className="text-xs px-3 py-1.5 rounded-lg border border-red-200 text-red-700 bg-red-50"
+                        onClick={() => deleteCode(c.id)}
+                      >
+                        🗑 حذف
+                      </button>
+                    </div>
                 </button>
                 <span className="text-xs text-slate-500">
                   {c.usedCount}/{c.maxUses} · {c.note || "—"} · {fmt(c.createdAt)}
@@ -798,21 +825,46 @@ export default function AdminPage() {
                 <>
                   <div className="flex-1 overflow-y-auto p-4 space-y-2 max-h-[360px]">
                     {chatMsgs.map((m) => (
-                      <div
-                        key={m.id}
-                        className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${
-                          m.sender === "admin"
-                            ? "mr-auto bg-[#1565C0] text-white"
-                            : "ml-auto bg-slate-100"
-                        }`}
-                      >
-                        {m.body}
+                      <div key={m.id} className="space-y-1">
                         <div
-                          className={`text-[10px] mt-1 ${
-                            m.sender === "admin" ? "text-blue-100" : "text-slate-400"
+                          className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${
+                            m.sender === "admin"
+                              ? "mr-auto bg-[#1565C0] text-white"
+                              : "ml-auto bg-slate-100"
                           }`}
                         >
-                          {fmt(m.createdAt)}
+                          {m.body}
+                        </div>
+                        <div className={`flex gap-2 text-[10px] ${m.sender === "admin" ? "justify-start" : "justify-end"}`}>
+                          <button
+                            className="text-blue-600 hover:underline"
+                            onClick={async () => {
+                              const body = prompt("ویرایش پیام", m.body);
+                              if (body === null || !body.trim()) return;
+                              await fetch("/api/admin/chat", {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ id: m.id, body }),
+                              });
+                              if (chatLicenseId) await openChat(chatLicenseId);
+                            }}
+                          >
+                            ویرایش
+                          </button>
+                          <button
+                            className="text-red-600 hover:underline"
+                            onClick={async () => {
+                              if (!confirm("حذف این پیام؟")) return;
+                              await fetch("/api/admin/chat", {
+                                method: "DELETE",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ messageId: m.id }),
+                              });
+                              if (chatLicenseId) await openChat(chatLicenseId);
+                            }}
+                          >
+                            حذف
+                          </button>
                         </div>
                       </div>
                     ))}

@@ -8,26 +8,6 @@ export const runtime = "nodejs";
 const DEFAULT_SOURCE =
   "https://raw.githubusercontent.com/hasan-ahani/shamsi-holidays/main/holidays";
 
-/** تبدیل تقریبی جلالی به میلادی برای ذخیره یکنواخت */
-function jalaliToGregorian(jy: number, jm: number, jd: number): string {
-  // الگوریتم ساده — برای دقت از library استفاده شود؛ اینجا تقریبی استاندارد
-  const gy = jy <= 979 ? 621 : 1600;
-  const days =
-    365 * jy +
-    Math.floor(jy / 33) * 8 +
-    Math.floor(((jy % 33) + 3) / 4) +
-    78 +
-    jd +
-    (jm < 7 ? (jm - 1) * 31 : (jm - 7) * 30 + 186);
-  let gDays = days - 79;
-  // ساده‌سازی: از Date UTC استفاده نمی‌کنیم — ذخیره همان رشته جلالی هم کافی است
-  // برای سازگاری با اپ، date را به صورت YYYY-MM-DD جلالی با پیشوند J نگه نمی‌داریم
-  // اپ خودش shamsi را به greg تبدیل می‌کند؛ اینجا هم از همان منبع JSON استفاده می‌کنیم
-  void gy;
-  void gDays;
-  return `${jy}-${String(jm).padStart(2, "0")}-${String(jd).padStart(2, "0")}`;
-}
-
 export async function GET() {
   if (!(await isAdminAuthenticated())) return jsonErr("غیرمجاز", 401);
   const holidays = await prisma.officialHoliday.findMany({ orderBy: { date: "asc" } });
@@ -38,29 +18,63 @@ export async function POST(req: Request) {
   if (!(await isAdminAuthenticated())) return jsonErr("غیرمجاز", 401);
   try {
     const body = await req.json();
-    // همگام‌سازی از گیت‌هاب برای سال جلالی
-    if (body.syncYear) {
-      const year = Number(body.syncYear);
-      const url = `${DEFAULT_SOURCE}/${year}.json`;
-      const res = await fetch(url, { next: { revalidate: 0 } });
-      if (!res.ok) return jsonErr(`دریافت ناموفق: ${res.status}`, 502);
-      const arr = (await res.json()) as any[];
+
+    // همگام‌سازی از URL دلخواه یا پیش‌فرض
+    if (body.syncYear || body.endpointUrl) {
+      const year = Number(body.syncYear || new Date().getFullYear() - 621);
+      // endpointUrl می‌تواند:
+      // 1) پایه پوشه: .../holidays  →  .../holidays/1404.json
+      // 2) آدرس کامل فایل JSON یک سال
+      let url = (body.endpointUrl as string | undefined)?.trim() || "";
+      if (!url) {
+        url = `${DEFAULT_SOURCE}/${year}.json`;
+      } else if (!url.endsWith(".json")) {
+        url = `${url.replace(/\/$/, "")}/${year}.json`;
+      }
+
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) return jsonErr(`دریافت ناموفق (${res.status}): ${url}`, 502);
+      const data = await res.json();
+      const arr = Array.isArray(data) ? data : data.holidays || data.data || [];
+      if (!Array.isArray(arr)) return jsonErr("فرمت JSON آرایه نیست", 400);
+
       let added = 0;
       for (const item of arr) {
-        if (!item?.is_holiday) continue;
-        const jdate = String(item.date || ""); // 1404-01-01
-        const parts = jdate.split("-").map(Number);
-        if (parts.length !== 3) continue;
-        let title = "تعطیل رسمی";
+        // پشتیبانی از چند فرمت رایج
+        const isHol =
+          item?.is_holiday === true ||
+          item?.isHoliday === true ||
+          item?.holiday === true ||
+          item?.type === "holiday";
+        if (!isHol && item?.is_holiday === false) continue;
+        // اگر فیلد is_holiday نبود ولی title/date داشت، قبول کن
+        const jdate = String(item.date || item.day || item.jdate || "");
+        if (!jdate || jdate.length < 8) continue;
+        if (item?.is_holiday === false) continue;
+
+        let title =
+          item.title ||
+          item.description ||
+          item.name ||
+          "تعطیل رسمی";
         if (Array.isArray(item.events)) {
-          const ev = item.events.find((e: any) => e.is_holiday) || item.events[0];
+          const ev =
+            item.events.find((e: any) => e.is_holiday) || item.events[0];
           if (ev?.description) title = String(ev.description);
+          if (ev?.title) title = String(ev.title);
         }
-        // ذخیره با کلید جلالی؛ اپ هنگام سینک تبدیل می‌کند
+        // اگر is_holiday مشخص نبود ولی events خالی بود، skip
+        if (item?.is_holiday === undefined && item?.isHoliday === undefined) {
+          if (Array.isArray(item.events)) {
+            const anyHol = item.events.some((e: any) => e.is_holiday);
+            if (!anyHol && item.events.length === 0) continue;
+          }
+        }
+
         await prisma.officialHoliday.upsert({
           where: { date: jdate },
-          create: { date: jdate, title, source: "github" },
-          update: { title, source: "github" },
+          create: { date: jdate, title: String(title), source: url },
+          update: { title: String(title), source: url },
         });
         added++;
       }
@@ -81,7 +95,7 @@ export async function POST(req: Request) {
     return jsonOk({ holiday: h });
   } catch (e) {
     console.error(e);
-    return jsonErr("خطا", 400);
+    return jsonErr("خطا: " + (e as Error).message, 400);
   }
 }
 
@@ -102,7 +116,7 @@ export async function DELETE(req: Request) {
       return jsonOk({ deleted: true });
     }
     return jsonErr("پارامتر نامعتبر", 400);
-  } catch (e) {
+  } catch {
     return jsonErr("حذف ناموفق", 400);
   }
 }
