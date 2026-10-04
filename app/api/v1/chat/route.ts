@@ -20,7 +20,6 @@ async function getLicense(licenseKey: string, deviceId: string) {
   return license;
 }
 
-/** لیست پیام‌های چت پشتیبانی */
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -58,7 +57,6 @@ export async function GET(req: Request) {
   }
 }
 
-/** ارسال پیام از کاربر */
 export async function POST(req: Request) {
   try {
     const parsed = sendSchema.safeParse(await req.json());
@@ -85,6 +83,21 @@ export async function POST(req: Request) {
         createdAt: msg.createdAt,
       },
     });
+  } catch (e) {
+    console.error(e);
+    return jsonErr("خطا", 500);
+  }
+}
+
+/** پاک کردن تاریخچه چت کاربر */
+export async function DELETE(req: Request) {
+  try {
+    const parsed = listSchema.safeParse(await req.json());
+    if (!parsed.success) return jsonErr("داده نامعتبر", 400);
+    const license = await getLicense(parsed.data.licenseKey, parsed.data.deviceId);
+    if (!license) return jsonErr("غیرمجاز", 403);
+    await prisma.chatMessage.deleteMany({ where: { licenseId: license.id } });
+    return jsonOk({ cleared: true });
   } catch (e) {
     console.error(e);
     return jsonErr("خطا", 500);
