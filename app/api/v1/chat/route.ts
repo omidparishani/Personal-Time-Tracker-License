@@ -16,7 +16,6 @@ async function getLicense(licenseKey: string, deviceId: string) {
   return license;
 }
 
-/** لیست پیام‌ها — support / direct / broadcast */
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -25,13 +24,100 @@ export async function GET(req: Request) {
       deviceId: url.searchParams.get("deviceId"),
     });
     if (!parsed.success) return jsonErr("داده نامعتبر", 400);
-
     const license = await getLicense(parsed.data.licenseKey, parsed.data.deviceId);
     if (!license) return jsonErr("غیرمجاز", 403);
 
-    const peerId = url.searchParams.get("peerId"); // null = support + broadcast
+    const mode = url.searchParams.get("mode") || "messages"; // conversations | messages
+    const peerId = url.searchParams.get("peerId");
     const kind = url.searchParams.get("kind") || (peerId ? "direct" : "support");
 
+    if (mode === "conversations") {
+      // لیست گفتگوها: پشتیبانی + هر peer با آخرین پیام
+      const supportLast = await prisma.chatMessage.findFirst({
+        where: { licenseId: license.id, kind: "support" },
+        orderBy: { createdAt: "desc" },
+      });
+      const supportUnread = await prisma.chatMessage.count({
+        where: {
+          licenseId: license.id,
+          kind: "support",
+          sender: "admin",
+          readByUser: false,
+        },
+      });
+      const broadcastLast = await prisma.chatMessage.findFirst({
+        where: { kind: "broadcast" },
+        orderBy: { createdAt: "desc" },
+      });
+
+      // peers from messages
+      const directMsgs = await prisma.chatMessage.findMany({
+        where: {
+          kind: "direct",
+          OR: [{ licenseId: license.id }, { peerId: license.id }],
+        },
+        orderBy: { createdAt: "desc" },
+        take: 500,
+      });
+      const peerMap = new Map<string, { last: string; lastAt: Date; unread: number }>();
+      for (const m of directMsgs) {
+        const other =
+          m.licenseId === license.id ? m.peerId || "" : m.licenseId;
+        if (!other) continue;
+        if (!peerMap.has(other)) {
+          peerMap.set(other, {
+            last: m.body,
+            lastAt: m.createdAt,
+            unread: 0,
+          });
+        }
+        if (
+          m.licenseId !== license.id &&
+          !m.readByUser
+        ) {
+          const cur = peerMap.get(other)!;
+          cur.unread += 1;
+        }
+      }
+      const peerIds = [...peerMap.keys()];
+      const peers = peerIds.length
+        ? await prisma.license.findMany({
+            where: { id: { in: peerIds } },
+            select: { id: true, username: true, adminNote: true, deviceModel: true },
+          })
+        : [];
+      const peerName = (id: string) => {
+        const p = peers.find((x) => x.id === id);
+        return p?.username || p?.adminNote || p?.deviceModel || "همکار";
+      };
+
+      const conversations = [
+        {
+          id: "support",
+          type: "support",
+          title: "پشتیبانی",
+          lastMessage: supportLast?.body || broadcastLast?.body || null,
+          lastAt: supportLast?.createdAt || broadcastLast?.createdAt || null,
+          unread: supportUnread,
+        },
+        ...[...peerMap.entries()].map(([id, v]) => ({
+          id,
+          type: "direct",
+          title: peerName(id),
+          lastMessage: v.last,
+          lastAt: v.lastAt,
+          unread: v.unread,
+        })),
+      ].sort((a, b) => {
+        const ta = a.lastAt ? new Date(a.lastAt).getTime() : 0;
+        const tb = b.lastAt ? new Date(b.lastAt).getTime() : 0;
+        return tb - ta;
+      });
+
+      return jsonOk({ conversations, myId: license.id });
+    }
+
+    // messages in a thread
     let messages;
     if (kind === "direct" && peerId) {
       messages = await prisma.chatMessage.findMany({
@@ -43,16 +129,18 @@ export async function GET(req: Request) {
           ],
         },
         orderBy: { createdAt: "asc" },
-        take: 300,
+        take: 400,
       });
-    } else if (kind === "broadcast") {
-      messages = await prisma.chatMessage.findMany({
-        where: { kind: "broadcast" },
-        orderBy: { createdAt: "asc" },
-        take: 100,
+      await prisma.chatMessage.updateMany({
+        where: {
+          kind: "direct",
+          licenseId: peerId,
+          peerId: license.id,
+          readByUser: false,
+        },
+        data: { readByUser: true },
       });
     } else {
-      // support + recent broadcasts
       messages = await prisma.chatMessage.findMany({
         where: {
           OR: [
@@ -61,12 +149,12 @@ export async function GET(req: Request) {
           ],
         },
         orderBy: { createdAt: "asc" },
-        take: 300,
+        take: 400,
       });
       await prisma.chatMessage.updateMany({
         where: {
           OR: [
-            { licenseId: license.id, sender: "admin", readByUser: false },
+            { licenseId: license.id, kind: "support", sender: "admin", readByUser: false },
             { kind: "broadcast", readByUser: false },
           ],
         },
@@ -75,6 +163,7 @@ export async function GET(req: Request) {
     }
 
     return jsonOk({
+      myId: license.id,
       messages: messages.map((m) => ({
         id: m.id,
         sender: m.sender,
@@ -92,7 +181,6 @@ export async function GET(req: Request) {
   }
 }
 
-/** ارسال پیام support یا direct */
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -104,9 +192,8 @@ export async function POST(req: Request) {
       })
       .safeParse(body);
     if (!parsed.success) return jsonErr("داده نامعتبر", 400);
-
     const license = await getLicense(parsed.data.licenseKey, parsed.data.deviceId);
-    if (!license) return jsonErr("غیرمجاز یا پشتیبانی غیرفعال", 403);
+    if (!license) return jsonErr("غیرمجاز", 403);
 
     const kind = parsed.data.peerId ? "direct" : parsed.data.kind || "support";
     if (kind === "direct") {
@@ -126,7 +213,6 @@ export async function POST(req: Request) {
         readByAdmin: false,
       },
     });
-
     return jsonOk({
       message: {
         id: msg.id,
@@ -144,14 +230,46 @@ export async function POST(req: Request) {
   }
 }
 
+/** حذف: messageId | peerId (گفتگو) | all=true */
 export async function DELETE(req: Request) {
   try {
+    const body = await req.json();
     const parsed = authSchema
-      .extend({ peerId: z.string().optional().nullable() })
-      .safeParse(await req.json());
+      .extend({
+        messageId: z.string().optional(),
+        peerId: z.string().optional().nullable(),
+        all: z.boolean().optional(),
+        kind: z.string().optional(),
+      })
+      .safeParse(body);
     if (!parsed.success) return jsonErr("داده نامعتبر", 400);
     const license = await getLicense(parsed.data.licenseKey, parsed.data.deviceId);
     if (!license) return jsonErr("غیرمجاز", 403);
+
+    if (parsed.data.messageId) {
+      const msg = await prisma.chatMessage.findUnique({ where: { id: parsed.data.messageId } });
+      if (!msg) return jsonErr("پیام یافت نشد", 404);
+      // فقط پیام خود کاربر یا پیام‌های گفتگوی خودش
+      const can =
+        msg.licenseId === license.id ||
+        msg.peerId === license.id ||
+        (msg.kind === "support" && msg.licenseId === license.id);
+      if (!can) return jsonErr("اجازه ندارید", 403);
+      await prisma.chatMessage.delete({ where: { id: msg.id } });
+      return jsonOk({ deleted: true });
+    }
+
+    if (parsed.data.all) {
+      await prisma.chatMessage.deleteMany({
+        where: {
+          OR: [
+            { licenseId: license.id },
+            { peerId: license.id },
+          ],
+        },
+      });
+      return jsonOk({ cleared: true });
+    }
 
     if (parsed.data.peerId) {
       await prisma.chatMessage.deleteMany({
@@ -163,11 +281,13 @@ export async function DELETE(req: Request) {
           ],
         },
       });
-    } else {
-      await prisma.chatMessage.deleteMany({
-        where: { licenseId: license.id, kind: "support" },
-      });
+      return jsonOk({ cleared: true });
     }
+
+    // clear support thread
+    await prisma.chatMessage.deleteMany({
+      where: { licenseId: license.id, kind: "support" },
+    });
     return jsonOk({ cleared: true });
   } catch (e) {
     console.error(e);

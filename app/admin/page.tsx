@@ -78,7 +78,7 @@ const emptyShiftForm = {
 
 export default function AdminPage() {
   const router = useRouter();
-  const [tab, setTab] = useState<"codes" | "shifts" | "users" | "chat">("shifts");
+  const [tab, setTab] = useState<"codes" | "shifts" | "users" | "chat" | "direct">("shifts");
   const [codes, setCodes] = useState<CodeRow[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [licenses, setLicenses] = useState<LicenseRow[]>([]);
@@ -95,6 +95,8 @@ export default function AdminPage() {
   const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [broadcastText, setBroadcastText] = useState("");
+  const [directThreads, setDirectThreads] = useState<any[]>([]);
+
 
 
   const load = useCallback(async () => {
@@ -231,6 +233,16 @@ export default function AdminPage() {
     await load();
   }
 
+  async function deleteLicense(id: string) {
+    if (!confirm("این لایسنس برای همیشه حذف شود؟")) return;
+    await fetch("/api/admin/licenses", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    await load();
+  }
+
   async function openChat(licenseId: string) {
     setChatLicenseId(licenseId);
     const res = await fetch(`/api/admin/chat?licenseId=${licenseId}`);
@@ -296,6 +308,7 @@ export default function AdminPage() {
               ["users", "کارمندان"],
               ["codes", "کد فعال‌سازی"],
               ["chat", "پشتیبانی"],
+              ["direct", "گفتگوی کاربران"],
             ] as const
           ).map(([k, label]) => (
             <button
@@ -531,6 +544,12 @@ export default function AdminPage() {
                     >
                       {l.active ? "قطع" : "فعال"}
                     </button>
+                    <button
+                      onClick={() => deleteLicense(l.id)}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-red-300 text-red-700 bg-red-50"
+                    >
+                      حذف
+                    </button>
                   </div>
                 </div>
               </div>
@@ -538,6 +557,36 @@ export default function AdminPage() {
             {licenses.length === 0 && (
               <p className="text-center text-slate-400 py-8">هنوز کاربری فعال نشده</p>
             )}
+          </div>
+        ) : tab === "direct" ? (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-500 mb-2">گفتگوهای مستقیم بین کاربران</p>
+            {directThreads.length === 0 && (
+              <p className="text-center text-slate-400 py-8">گفتگویی ثبت نشده</p>
+            )}
+            {directThreads.map((th: any) => (
+              <div key={th.id} className="bg-white rounded-xl border p-4 shadow-sm">
+                <div className="font-medium text-sm">
+                  {th.userA?.name} ↔ {th.userB?.name}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">{th.lastMessage}</div>
+                <div className="text-xs text-slate-400">{th.count} پیام</div>
+                <button
+                  className="text-xs text-red-600 mt-2"
+                  onClick={async () => {
+                    if (!confirm("حذف این گفتگو؟")) return;
+                    await fetch("/api/admin/chat", {
+                      method: "DELETE",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ licenseId: th.userA?.id, peerId: th.userB?.id }),
+                    });
+                    await load();
+                  }}
+                >
+                  حذف گفتگو
+                </button>
+              </div>
+            ))}
           </div>
         ) : tab === "codes" ? (
           <div className="space-y-4">
@@ -594,7 +643,7 @@ export default function AdminPage() {
               {threads.map((t) => (
                 <button
                   key={t.licenseId}
-                  onClick={() => openChat(t.licenseId)}
+                  onClick={() => openChat(t.licenseId)} /* chat */
                   className={`w-full text-right px-3 py-2.5 border-b text-sm hover:bg-slate-50 ${
                     chatLicenseId === t.licenseId ? "bg-blue-50" : ""
                   }`}

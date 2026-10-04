@@ -61,3 +61,26 @@ export async function PATCH(req: Request) {
     return jsonErr("به‌روزرسانی ناموفق", 400);
   }
 }
+
+
+export async function DELETE(req: Request) {
+  if (!(await isAdminAuthenticated())) return jsonErr("غیرمجاز", 401);
+  try {
+    const body = await req.json();
+    const id = body?.id as string | undefined;
+    if (!id) return jsonErr("id لازم است", 400);
+    await prisma.chatMessage.deleteMany({ where: { licenseId: id } });
+    await prisma.license.delete({ where: { id } });
+    await prisma.auditLog.create({
+      data: {
+        action: "license_delete",
+        detail: id,
+        ip: clientIp(req),
+      },
+    });
+    return jsonOk({ deleted: true });
+  } catch (e) {
+    console.error(e);
+    return jsonErr("حذف ناموفق", 400);
+  }
+}
