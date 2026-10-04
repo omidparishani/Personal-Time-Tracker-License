@@ -207,3 +207,21 @@ export async function DELETE(req: Request) {
   }
   return jsonErr("پارامتر نامعتبر", 400);
 }
+
+
+export async function PATCH(req: Request) {
+  if (!(await isAdminAuthenticated())) return jsonErr("غیرمجاز", 401);
+  try {
+    const body = await req.json();
+    const id = body?.id as string | undefined;
+    const text = body?.body as string | undefined;
+    if (!id || !text?.trim()) return jsonErr("id و body لازم است", 400);
+    const msg = await prisma.chatMessage.update({
+      where: { id },
+      data: { body: text.trim() },
+    });
+    return jsonOk({ message: msg });
+  } catch {
+    return jsonErr("ویرایش ناموفق", 400);
+  }
+}

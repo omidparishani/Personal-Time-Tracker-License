@@ -78,7 +78,7 @@ const emptyShiftForm = {
 
 export default function AdminPage() {
   const router = useRouter();
-  const [tab, setTab] = useState<"codes" | "shifts" | "users" | "chat" | "direct">("shifts");
+  const [tab, setTab] = useState<"codes" | "shifts" | "users" | "chat" | "direct" | "holidays">("shifts");
   const [codes, setCodes] = useState<CodeRow[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [licenses, setLicenses] = useState<LicenseRow[]>([]);
@@ -96,6 +96,9 @@ export default function AdminPage() {
   const [chatInput, setChatInput] = useState("");
   const [broadcastText, setBroadcastText] = useState("");
   const [directThreads, setDirectThreads] = useState<any[]>([]);
+  const [holidaysList, setHolidaysList] = useState<any[]>([]);
+  const [holidayYear, setHolidayYear] = useState(1404);
+
 
 
 
@@ -233,7 +236,27 @@ export default function AdminPage() {
     await load();
   }
 
+  async function deleteCode(id: string) {
+    if (!confirm("این کد حذف شود؟")) return;
+    await fetch("/api/admin/codes", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    await load();
+  }
+
+  async function patchCode(id: string, body: Record<string, unknown>) {
+    await fetch("/api/admin/codes", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, ...body }),
+    });
+    await load();
+  }
+
   async function deleteLicense(id: string) {
+
     if (!confirm("این لایسنس برای همیشه حذف شود؟")) return;
     await fetch("/api/admin/licenses", {
       method: "DELETE",
@@ -309,6 +332,7 @@ export default function AdminPage() {
               ["codes", "کد فعال‌سازی"],
               ["chat", "پشتیبانی"],
               ["direct", "گفتگوی کاربران"],
+              ["holidays", "تعطیلات رسمی"],
             ] as const
           ).map(([k, label]) => (
             <button
@@ -588,6 +612,78 @@ export default function AdminPage() {
               </div>
             ))}
           </div>
+        ) : tab === "holidays" ? (
+          <div className="space-y-4">
+            <section className="bg-white rounded-2xl border p-5 space-y-3">
+              <h3 className="font-bold text-sm">همگام‌سازی تعطیلات رسمی</h3>
+              <p className="text-xs text-slate-500">
+                منبع پیش‌فرض: hasan-ahani/shamsi-holidays (GitHub)
+              </p>
+              <div className="flex gap-2 items-end flex-wrap">
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">سال شمسی</label>
+                  <input
+                    type="number"
+                    value={holidayYear}
+                    onChange={(e) => setHolidayYear(Number(e.target.value) || 1404)}
+                    className="w-28 rounded-lg border px-3 py-2 text-sm"
+                  />
+                </div>
+                <button
+                  className="bg-[#1565C0] text-white px-4 py-2 rounded-lg text-sm"
+                  onClick={async () => {
+                    const res = await fetch("/api/admin/holidays", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ syncYear: holidayYear }),
+                    });
+                    const d = await res.json();
+                    setMsg(d.ok ? `همگام شد: ${d.added} روز` : d.error || "خطا");
+                    await load();
+                  }}
+                >
+                  دریافت از endpoint
+                </button>
+                <button
+                  className="text-red-600 text-sm border border-red-200 px-3 py-2 rounded-lg"
+                  onClick={async () => {
+                    if (!confirm("همه تعطیلات پاک شوند؟")) return;
+                    await fetch("/api/admin/holidays", {
+                      method: "DELETE",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ all: true }),
+                    });
+                    await load();
+                  }}
+                >
+                  پاک کردن همه
+                </button>
+              </div>
+            </section>
+            <div className="space-y-2">
+              {holidaysList.map((h: any) => (
+                <div key={h.id || h.date} className="bg-white border rounded-xl px-4 py-3 flex justify-between text-sm">
+                  <span>{h.date} — {h.title}</span>
+                  <button
+                    className="text-red-600 text-xs"
+                    onClick={async () => {
+                      await fetch("/api/admin/holidays", {
+                        method: "DELETE",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ id: h.id }),
+                      });
+                      await load();
+                    }}
+                  >
+                    حذف
+                  </button>
+                </div>
+              ))}
+              {holidaysList.length === 0 && (
+                <p className="text-center text-slate-400 py-6">تعطیلی ثبت نشده — دریافت از endpoint را بزنید</p>
+              )}
+            </div>
+          </div>
         ) : tab === "codes" ? (
           <div className="space-y-4">
             <section className="bg-white rounded-2xl border p-5 flex flex-wrap gap-3 items-end">
@@ -620,6 +716,8 @@ export default function AdminPage() {
               </button>
             </section>
             {codes.map((c) => (
+              /* code card */
+
               <div key={c.id} className="bg-white rounded-xl border p-4 flex justify-between">
                 <button
                   className="font-mono font-bold text-[#1565C0]"
@@ -629,6 +727,29 @@ export default function AdminPage() {
                   }}
                 >
                   {c.code}
+                    <span className="ml-2 space-x-1 space-x-reverse">
+                      <button
+                        className="text-xs text-blue-600"
+                        onClick={() => {
+                          const note = prompt("یادداشت", c.note || "");
+                          if (note === null) return;
+                          const maxUses = prompt("حداکثر استفاده", String(c.maxUses || 1));
+                          if (maxUses === null) return;
+                          patchCode(c.id, { note, maxUses: Number(maxUses) || 1 });
+                        }}
+                      >
+                        ویرایش
+                      </button>
+                      <button className="text-xs text-red-600" onClick={() => deleteCode(c.id)}>
+                        حذف
+                      </button>
+                      <button
+                        className="text-xs text-slate-600"
+                        onClick={() => patchCode(c.id, { enabled: !c.enabled })}
+                      >
+                        {c.enabled ? "غیرفعال" : "فعال"}
+                      </button>
+                    </span>
                 </button>
                 <span className="text-xs text-slate-500">
                   {c.usedCount}/{c.maxUses} · {c.note || "—"} · {fmt(c.createdAt)}

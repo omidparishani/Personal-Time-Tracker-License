@@ -107,3 +107,16 @@ model AuditLog {
   ip        String?
   createdAt DateTime @default(now())
 }
+
+
+/// تعطیلات رسمی — از endpoint یا دستی
+model OfficialHoliday {
+  id        String   @id @default(cuid())
+  date      String   // yyyy-MM-dd میلادی
+  title     String
+  source    String?  // github | manual | admin
+  createdAt DateTime @default(now())
+
+  @@unique([date])
+  @@index([date])
+}

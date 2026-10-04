@@ -81,22 +81,46 @@ export async function POST(req: Request) {
 const patchSchema = z.object({
   id: z.string(),
   enabled: z.boolean().optional(),
-  note: z.string().max(200).optional(),
+  note: z.string().max(200).optional().nullable(),
+  maxUses: z.number().int().min(1).max(100).optional(),
+  code: z.string().min(4).max(40).optional(),
 });
 
 export async function PATCH(req: Request) {
   if (!(await isAdminAuthenticated())) return jsonErr("غیرمجاز", 401);
   try {
     const body = patchSchema.parse(await req.json());
+    const data: Record<string, unknown> = {};
+    if (body.enabled !== undefined) data.enabled = body.enabled;
+    if (body.note !== undefined) data.note = body.note;
+    if (body.maxUses !== undefined) data.maxUses = body.maxUses;
+    if (body.code !== undefined) data.code = body.code.trim().toUpperCase();
     const updated = await prisma.activationCode.update({
       where: { id: body.id },
-      data: {
-        enabled: body.enabled,
-        note: body.note,
-      },
+      data,
     });
     return jsonOk({ code: updated });
-  } catch {
+  } catch (e) {
+    console.error(e);
     return jsonErr("به‌روزرسانی ناموفق", 400);
+  }
+}
+
+const deleteSchema = z.object({ id: z.string() });
+
+export async function DELETE(req: Request) {
+  if (!(await isAdminAuthenticated())) return jsonErr("غیرمجاز", 401);
+  try {
+    const body = deleteSchema.parse(await req.json());
+    // حذف کد؛ لایسنس‌های وابسته با cascade اگر تعریف شده — وگرنه اول unlink
+    await prisma.license.deleteMany({ where: { codeId: body.id } }).catch(() => null);
+    await prisma.activationCode.delete({ where: { id: body.id } });
+    await prisma.auditLog.create({
+      data: { action: "code_delete", detail: body.id, ip: clientIp(req) },
+    });
+    return jsonOk({ deleted: true });
+  } catch (e) {
+    console.error(e);
+    return jsonErr("حذف ناموفق — ممکن است لایسنس فعال داشته باشد", 400);
   }
 }
