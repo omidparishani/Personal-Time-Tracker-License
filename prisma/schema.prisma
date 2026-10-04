@@ -19,21 +19,17 @@ model ActivationCode {
   licenses  License[]
 }
 
-/// قالب شیفت کاری — در پنل ساخته می‌شود و به کارمند وصل می‌شود
 model Shift {
   id                    String    @id @default(cuid())
   name                  String
-  /// توضیح اختیاری
   description           String?
   startWorkTime         String    @default("09:00")
   endWorkTime           String    @default("17:00")
-  /// شناوری (دقیقه)
   flexibleMinutes       Int       @default(30)
   minimumWorkMinutes    Int       @default(480)
   weeklyRequiredMinutes Int       @default(2775)
   thursdayWorking       Boolean   @default(false)
   thursdayMinutes       Int       @default(300)
-  /// JSON تاریخ‌های تعطیل مشترک این شیفت
   holidaysJson          String    @default("[]")
   enabled               Boolean   @default(true)
   createdAt             DateTime  @default(now())
@@ -63,11 +59,9 @@ model License {
   canReports     Boolean        @default(true)
   canSupport     Boolean        @default(true)
 
-  /// اتصال به قالب شیفت (اولویت با شیفت است)
   shiftId        String?
   shift          Shift?         @relation(fields: [shiftId], references: [id])
 
-  /// مقادیر قدیمی — فقط اگر shiftId خالی باشد استفاده می‌شوند
   startWorkTime  String         @default("09:00")
   endWorkTime    String         @default("17:00")
   flexibleMinutes Int           @default(30)
@@ -77,7 +71,7 @@ model License {
   thursdayMinutes Int           @default(300)
   holidaysJson   String         @default("[]")
 
-  messages       ChatMessage[]
+  messages       ChatMessage[]  @relation("LicenseMessages")
 
   @@index([deviceId])
   @@index([active])
@@ -85,17 +79,25 @@ model License {
   @@unique([codeId, deviceId])
 }
 
+/// پیام پشتیبانی، مستقیم بین کاربران، یا گروهی از ادمین
 model ChatMessage {
-  id          String   @id @default(cuid())
-  licenseId   String
-  license     License  @relation(fields: [licenseId], references: [id], onDelete: Cascade)
-  sender      String
-  body        String
-  readByAdmin Boolean  @default(false)
-  readByUser  Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  licenseId    String
+  license      License  @relation("LicenseMessages", fields: [licenseId], references: [id], onDelete: Cascade)
+  /// user | admin
+  sender       String
+  body         String
+  /// support | direct | broadcast
+  kind         String   @default("support")
+  /// برای چت مستقیم: شناسه لایسنس طرف مقابل
+  peerId       String?
+  readByAdmin  Boolean  @default(false)
+  readByUser   Boolean  @default(false)
+  createdAt    DateTime @default(now())
 
   @@index([licenseId, createdAt])
+  @@index([peerId, createdAt])
+  @@index([kind, createdAt])
 }
 
 model AuditLog {

@@ -94,6 +94,8 @@ export default function AdminPage() {
   const [chatLicenseId, setChatLicenseId] = useState<string | null>(null);
   const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [broadcastText, setBroadcastText] = useState("");
+
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -236,7 +238,19 @@ export default function AdminPage() {
     if (data.ok) setChatMsgs(data.messages);
   }
 
+  async function sendBroadcast() {
+    if (!broadcastText.trim()) return;
+    await fetch("/api/admin/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ broadcast: true, body: broadcastText.trim() }),
+    });
+    setBroadcastText("");
+    alert("پیام گروهی ارسال شد");
+  }
+
   async function sendChat() {
+
     if (!chatLicenseId || !chatInput.trim()) return;
     await fetch("/api/admin/chat", {
       method: "POST",
@@ -591,6 +605,23 @@ export default function AdminPage() {
               ))}
             </div>
             <div className="md:col-span-2 bg-white rounded-xl border flex flex-col">
+              <div className="mb-4 p-3 border rounded-xl bg-slate-50">
+                <div className="text-sm font-bold mb-2">پیام گروهی به همه کاربران</div>
+                <div className="flex gap-2">
+                  <input
+                    className="flex-1 border rounded-lg px-3 py-2 text-sm"
+                    placeholder="متن پیام گروهی..."
+                    value={broadcastText}
+                    onChange={(e) => setBroadcastText(e.target.value)}
+                  />
+                  <button
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm"
+                    onClick={sendBroadcast}
+                  >
+                    ارسال گروهی
+                  </button>
+                </div>
+              </div>
               {!chatLicenseId ? (
                 <p className="m-auto text-slate-400 text-sm">یک گفتگو انتخاب کنید</p>
               ) : (

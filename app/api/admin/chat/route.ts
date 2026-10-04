@@ -1,93 +1,133 @@
-import { isAdminAuthenticated } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { jsonErr, jsonOk } from "@/lib/api";
+import { requireAdmin } from "@/lib/auth";
 import { z } from "zod";
 
 export const runtime = "nodejs";
 
-/** لیست گفتگوها + پیام‌های یک لایسنس */
 export async function GET(req: Request) {
-  if (!(await isAdminAuthenticated())) return jsonErr("غیرمجاز", 401);
+  const admin = await requireAdmin(req);
+  if (!admin) return jsonErr("غیرمجاز", 401);
+
   const url = new URL(req.url);
   const licenseId = url.searchParams.get("licenseId");
 
-  if (!licenseId) {
-    // لیست لایسنس‌هایی که پیام دارند + تعداد خوانده‌نشده
-    const licenses = await prisma.license.findMany({
-      orderBy: { lastSeenAt: "desc" },
-      select: {
-        id: true,
-        username: true,
-        deviceModel: true,
-        active: true,
-        lastSeenAt: true,
-        _count: {
-          select: {
-            messages: { where: { sender: "user", readByAdmin: false } },
+  if (licenseId) {
+    const messages = await prisma.chatMessage.findMany({
+      where: {
+        OR: [
+          { licenseId, kind: "support" },
+          { kind: "broadcast" },
+        ],
+      },
+      orderBy: { createdAt: "asc" },
+      take: 500,
+    });
+    await prisma.chatMessage.updateMany({
+      where: { licenseId, sender: "user", readByAdmin: false },
+      data: { readByAdmin: true },
+    });
+    return jsonOk({ messages });
+  }
+
+  // لیست ترددهای پشتیبانی با آخرین پیام
+  const licenses = await prisma.license.findMany({
+    where: { active: true },
+    select: {
+      id: true,
+      username: true,
+      adminNote: true,
+      licenseKey: true,
+      messages: {
+        where: { kind: "support" },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      },
+      _count: {
+        select: {
+          messages: {
+            where: { kind: "support", sender: "user", readByAdmin: false },
           },
         },
       },
-    });
-    return jsonOk({
-      threads: licenses
-        .map((l) => ({
-          licenseId: l.id,
-          username: l.username,
-          deviceModel: l.deviceModel,
-          active: l.active,
-          lastSeenAt: l.lastSeenAt,
-          unread: l._count.messages,
-        }))
-        .filter((t) => t.unread > 0 || true),
-    });
-  }
+    },
+    orderBy: { lastSeenAt: "desc" },
+    take: 100,
+  });
 
-  const messages = await prisma.chatMessage.findMany({
-    where: { licenseId },
-    orderBy: { createdAt: "asc" },
-    take: 300,
-  });
-  await prisma.chatMessage.updateMany({
-    where: { licenseId, sender: "user", readByAdmin: false },
-    data: { readByAdmin: true },
-  });
   return jsonOk({
-    messages: messages.map((m) => ({
-      id: m.id,
-      sender: m.sender,
-      body: m.body,
-      createdAt: m.createdAt,
+    threads: licenses.map((l) => ({
+      id: l.id,
+      name: l.username || l.adminNote || l.licenseKey.slice(0, 8),
+      lastMessage: l.messages[0]?.body || null,
+      lastAt: l.messages[0]?.createdAt || null,
+      unread: l._count.messages,
     })),
   });
 }
 
-const sendSchema = z.object({
-  licenseId: z.string(),
-  body: z.string().min(1).max(2000),
-});
-
 export async function POST(req: Request) {
-  if (!(await isAdminAuthenticated())) return jsonErr("غیرمجاز", 401);
-  try {
-    const body = sendSchema.parse(await req.json());
+  const admin = await requireAdmin(req);
+  if (!admin) return jsonErr("غیرمجاز", 401);
+
+  const body = await req.json();
+  const schema = z.object({
+    body: z.string().min(1).max(4000),
+    licenseId: z.string().optional(),
+    broadcast: z.boolean().optional(),
+  });
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) return jsonErr("داده نامعتبر", 400);
+
+  if (parsed.data.broadcast) {
+    // یک پیام broadcast برای همه
+    // از اولین لایسنس فعال به‌عنوان anchor استفاده می‌کنیم یا پیام بدون وابستگی
+    const any = await prisma.license.findFirst({ where: { active: true } });
+    if (!any) return jsonErr("هیچ کاربری نیست", 400);
     const msg = await prisma.chatMessage.create({
       data: {
-        licenseId: body.licenseId,
+        licenseId: any.id,
         sender: "admin",
-        body: body.body.trim(),
+        body: parsed.data.body.trim(),
+        kind: "broadcast",
         readByAdmin: true,
         readByUser: false,
       },
     });
-    return jsonOk({
-      message: {
-        id: msg.id,
-        sender: msg.sender,
-        body: msg.body,
-        createdAt: msg.createdAt,
-      },
-    });
-  } catch {
-    return jsonErr("ارسال ناموفق", 400);
+    return jsonOk({ message: msg, broadcast: true });
   }
+
+  if (!parsed.data.licenseId) return jsonErr("licenseId لازم است", 400);
+  const msg = await prisma.chatMessage.create({
+    data: {
+      licenseId: parsed.data.licenseId,
+      sender: "admin",
+      body: parsed.data.body.trim(),
+      kind: "support",
+      readByAdmin: true,
+      readByUser: false,
+    },
+  });
+  return jsonOk({ message: msg });
+}
+
+export async function DELETE(req: Request) {
+  const admin = await requireAdmin(req);
+  if (!admin) return jsonErr("غیرمجاز", 401);
+  const body = await req.json();
+  if (body.all) {
+    await prisma.chatMessage.deleteMany({});
+    return jsonOk({ cleared: true });
+  }
+  if (body.licenseId) {
+    await prisma.chatMessage.deleteMany({
+      where: { licenseId: body.licenseId, kind: "support" },
+    });
+    return jsonOk({ cleared: true });
+  }
+  if (body.id) {
+    await prisma.chatMessage.delete({ where: { id: body.id } });
+    return jsonOk({ deleted: true });
+  }
+  return jsonErr("پارامتر نامعتبر", 400);
 }
