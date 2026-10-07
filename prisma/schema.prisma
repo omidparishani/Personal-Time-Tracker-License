@@ -120,3 +120,42 @@ model OfficialHoliday {
   @@unique([date])
   @@index([date])
 }
+
+
+/// تنظیمات اتصال به API پیشخان بازار
+model BazaarConfig {
+  id              Int      @id @default(1)
+  packageName     String   @default("com.personal.timetracker")
+  /// نام هدر احراز هویت که پیشخان می‌دهد (مثلاً X-API-Key یا CAFEBAZAAR-API-KEY)
+  apiKeyHeader    String   @default("Authorization")
+  apiKeyValue     String   @default("")
+  baseUrl         String   @default("https://sandoghche.cafebazaar.ir")
+  /// شناسه برنامه در پیشخان (در صورت نیاز)
+  appId           String?
+  updatedAt       DateTime @updatedAt
+}
+
+/// تاریخچه نسخه‌های منتشر/آماده‌شده برای بازار
+model AppVersion {
+  id            String   @id @default(cuid())
+  versionCode   Int
+  versionName   String
+  /// ALL | armeabi-v7a | arm64-v8a
+  architecture  String   @default("ALL")
+  minSdk        Int      @default(26)
+  targetSdk     Int      @default(34)
+  /// draft | ready | uploaded | in_review | published | rejected
+  status        String   @default("draft")
+  changelogFa   String   @default("")
+  changelogEn   String   @default("")
+  /// شناسه رهانش در پیشخان (در صورت همگام‌سازی)
+  releaseId     String?
+  packageId     String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([versionCode, architecture])
+  @@index([status])
+  @@index([versionCode])
+}

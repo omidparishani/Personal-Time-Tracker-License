@@ -78,7 +78,7 @@ const emptyShiftForm = {
 
 export default function AdminPage() {
   const router = useRouter();
-  const [tab, setTab] = useState<"codes" | "shifts" | "users" | "chat" | "direct" | "holidays">("shifts");
+  const [tab, setTab] = useState<"codes" | "shifts" | "users" | "chat" | "direct" | "holidays" | "versions">("shifts");
   const [codes, setCodes] = useState<CodeRow[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [licenses, setLicenses] = useState<LicenseRow[]>([]);
@@ -98,6 +98,22 @@ export default function AdminPage() {
   const [directThreads, setDirectThreads] = useState<any[]>([]);
   const [holidaysList, setHolidaysList] = useState<any[]>([]);
   const [holidayYear, setHolidayYear] = useState(1404);
+  const [versionsList, setVersionsList] = useState<any[]>([]);
+  const [versionSuggested, setVersionSuggested] = useState<any>({});
+  const [bazaarCfg, setBazaarCfg] = useState<any>({});
+  const [verForm, setVerForm] = useState({
+    versionCode: 4,
+    versionName: "1.2.1",
+    architecture: "ALL",
+    changelogFa: "",
+    changelogEn: "",
+  });
+  const [bazaarForm, setBazaarForm] = useState({
+    packageName: "com.personal.timetracker",
+    apiKeyHeader: "CAFEBAZAAR-PISHKHAN-API-SECRET",
+    apiKeyValue: "",
+    baseUrl: "https://api.pishkhan.cafebazaar.ir/v1",
+  });
   const [holidayEndpoint, setHolidayEndpoint] = useState(
     "https://raw.githubusercontent.com/hasan-ahani/shamsi-holidays/main/holidays"
   );
@@ -109,11 +125,15 @@ export default function AdminPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [cRes, sRes, lRes, chRes] = await Promise.all([
+      const [cRes, sRes, lRes, chRes, vRes, bRes, hRes, dRes] = await Promise.all([
         fetch("/api/admin/codes"),
         fetch("/api/admin/shifts"),
         fetch("/api/admin/licenses"),
         fetch("/api/admin/chat"),
+        fetch("/api/admin/versions"),
+        fetch("/api/admin/bazaar"),
+        fetch("/api/admin/holidays"),
+        fetch("/api/admin/chat?view=direct"),
       ]);
       if ([cRes, sRes, lRes].some((r) => r.status === 401)) {
         router.push("/login");
@@ -123,10 +143,32 @@ export default function AdminPage() {
       const s = await sRes.json();
       const l = await lRes.json();
       const ch = await chRes.json();
+      const v = await vRes.json();
+      const b = await bRes.json();
+      const h = await hRes.json();
+      const d = await dRes.json();
       if (c.ok) setCodes(c.codes);
       if (s.ok) setShifts(s.shifts);
       if (l.ok) setLicenses(l.licenses);
       if (ch.ok) setThreads(ch.threads || []);
+      if (v.ok) {
+        setVersionsList(v.versions || []);
+        setVersionSuggested(v.suggested || {});
+        if (v.suggested?.ALL) {
+          setVerForm((f) => ({ ...f, versionCode: v.suggested.ALL }));
+        }
+      }
+      if (b.ok && b.config) {
+        setBazaarCfg(b.config);
+        setBazaarForm((f) => ({
+          ...f,
+          packageName: b.config.packageName || f.packageName,
+          apiKeyHeader: b.config.apiKeyHeader || f.apiKeyHeader,
+          baseUrl: b.config.baseUrl || f.baseUrl,
+        }));
+      }
+      if (h.ok) setHolidaysList(h.holidays || []);
+      if (d.ok) setDirectThreads(d.directThreads || []);
     } finally {
       setLoading(false);
     }
@@ -337,6 +379,7 @@ export default function AdminPage() {
               ["chat", "پشتیبانی"],
               ["direct", "گفتگوی کاربران"],
               ["holidays", "تعطیلات رسمی"],
+              ["versions", "نسخه‌ها / بازار"],
             ] as const
           ).map(([k, label]) => (
             <button
@@ -616,6 +659,385 @@ export default function AdminPage() {
               </div>
             ))}
           </div>
+        
+        ) : tab === "versions" ? (
+          <div className="space-y-4">
+            <section className="bg-white rounded-2xl border p-5 space-y-3">
+              <h3 className="font-bold text-sm">اتصال API پیشخان بازار</h3>
+              <p className="text-xs text-slate-500">
+                توکن را از پیشخان → بخش API بگیرید. مستندات:{" "}
+                <a
+                  className="text-blue-600 underline"
+                  href="https://developers.cafebazaar.ir/fa/guidelines/feature/pishkhan-api"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  API پیشخان
+                </a>
+              </p>
+              <div className="grid md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">Package name</label>
+                  <input
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                    dir="ltr"
+                    value={bazaarForm.packageName}
+                    onChange={(e) => setBazaarForm({ ...bazaarForm, packageName: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">Base URL</label>
+                  <input
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                    dir="ltr"
+                    value={bazaarForm.baseUrl}
+                    onChange={(e) => setBazaarForm({ ...bazaarForm, baseUrl: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">نام هدر API Key</label>
+                  <input
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                    dir="ltr"
+                    value={bazaarForm.apiKeyHeader}
+                    onChange={(e) => setBazaarForm({ ...bazaarForm, apiKeyHeader: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">
+                    مقدار توکن {bazaarCfg.hasToken ? "(ذخیره شده ✓)" : ""}
+                  </label>
+                  <input
+                    type="password"
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                    dir="ltr"
+                    placeholder={bazaarCfg.hasToken ? "•••••••• (برای تغییر پر کنید)" : "توکن پیشخان"}
+                    value={bazaarForm.apiKeyValue}
+                    onChange={(e) => setBazaarForm({ ...bazaarForm, apiKeyValue: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  className="bg-[#1565C0] text-white px-4 py-2 rounded-lg text-sm"
+                  onClick={async () => {
+                    const res = await fetch("/api/admin/bazaar", {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(bazaarForm),
+                    });
+                    const d = await res.json();
+                    setMsg(d.ok ? "تنظیمات بازار ذخیره شد" : d.error || "خطا");
+                    await load();
+                  }}
+                >
+                  ذخیره تنظیمات
+                </button>
+                <button
+                  className="border border-slate-200 px-4 py-2 rounded-lg text-sm"
+                  onClick={async () => {
+                    const res = await fetch("/api/admin/bazaar", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ action: "test" }),
+                    });
+                    const d = await res.json();
+                    setMsg(
+                      d.ok
+                        ? d.hint || `وضعیت: ${d.status}`
+                        : d.error || "تست ناموفق"
+                    );
+                  }}
+                >
+                  تست اتصال
+                </button>
+              </div>
+            </section>
+
+            <section className="bg-white rounded-2xl border p-5 space-y-3">
+              <h3 className="font-bold text-sm">رهانش و افزودن بسته (API پیشخان)</h3>
+              <p className="text-xs text-slate-500">
+                مطابق مستندات: ایجاد رهانش → افزودن بسته (APK/AAB) → ارسال برای بررسی
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm"
+                  onClick={async () => {
+                    const res = await fetch("/api/admin/bazaar", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ action: "create_release" }),
+                    });
+                    const d = await res.json();
+                    setMsg(d.message || (d.ok ? "رهانش ایجاد شد" : "خطا"));
+                  }}
+                >
+                  ۱. ایجاد رهانش
+                </button>
+                <button
+                  className="border border-slate-200 px-4 py-2 rounded-lg text-sm"
+                  onClick={async () => {
+                    const res = await fetch("/api/admin/bazaar", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ action: "last_uncommitted" }),
+                    });
+                    const d = await res.json();
+                    setMsg(
+                      d.hasDraft
+                        ? "رهانش ناتمام (draft) وجود دارد — می‌توانید بسته اضافه کنید"
+                        : "رهانش ناتمامی نیست — ابتدا ایجاد رهانش کنید"
+                    );
+                  }}
+                >
+                  بررسی رهانش ناتمام
+                </button>
+              </div>
+
+              <div className="border-t pt-3 space-y-2">
+                <div className="text-xs font-medium text-slate-600">۲. افزودن بسته</div>
+                <div className="flex flex-wrap gap-2 items-end">
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">فایل APK / AAB</label>
+                    <input
+                      type="file"
+                      accept=".apk,.aab"
+                      id="bazaar-apk-input"
+                      className="text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">معماری</label>
+                    <select id="bazaar-arch-select" className="border rounded-lg px-2 py-1.5 text-sm" defaultValue="all">
+                      <option value="all">ALL</option>
+                      <option value="armeabi-v7a">armeabi-v7a</option>
+                      <option value="arm64-v8a">arm64-v8a</option>
+                    </select>
+                  </div>
+                  <button
+                    className="bg-[#1565C0] text-white px-4 py-2 rounded-lg text-sm"
+                    onClick={async () => {
+                      const input = document.getElementById("bazaar-apk-input") as HTMLInputElement;
+                      const arch = (document.getElementById("bazaar-arch-select") as HTMLSelectElement).value;
+                      if (!input?.files?.[0]) {
+                        setMsg("فایل را انتخاب کنید");
+                        return;
+                      }
+                      const fd = new FormData();
+                      fd.append("apk", input.files[0]);
+                      fd.append("architecture", arch);
+                      setMsg("در حال آپلود بسته…");
+                      const res = await fetch("/api/admin/bazaar", { method: "POST", body: fd });
+                      const d = await res.json();
+                      setMsg(d.message || (d.ok ? "بسته افزوده شد" : "آپلود ناموفق"));
+                    }}
+                  >
+                    آپلود بسته
+                  </button>
+                </div>
+              </div>
+
+              <div className="border-t pt-3 space-y-2">
+                <div className="text-xs font-medium text-slate-600">۳. ارسال برای بررسی (commit)</div>
+                <div className="grid md:grid-cols-2 gap-2">
+                  <textarea
+                    id="bazaar-cl-fa"
+                    className="border rounded-lg px-3 py-2 text-sm"
+                    rows={2}
+                    placeholder="تغییرات فارسی"
+                    defaultValue={verForm.changelogFa}
+                  />
+                  <textarea
+                    id="bazaar-cl-en"
+                    className="border rounded-lg px-3 py-2 text-sm"
+                    rows={2}
+                    dir="ltr"
+                    placeholder="Changelog EN"
+                    defaultValue={verForm.changelogEn}
+                  />
+                </div>
+                <button
+                  className="bg-amber-600 text-white px-4 py-2 rounded-lg text-sm"
+                  onClick={async () => {
+                    const fa = (document.getElementById("bazaar-cl-fa") as HTMLTextAreaElement)?.value || "";
+                    const en = (document.getElementById("bazaar-cl-en") as HTMLTextAreaElement)?.value || "";
+                    const res = await fetch("/api/admin/bazaar", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        action: "commit",
+                        changelog_fa: fa,
+                        changelog_en: en,
+                        staged_rollout_percentage: 100,
+                        auto_publish: false,
+                      }),
+                    });
+                    const d = await res.json();
+                    setMsg(d.message || (d.ok ? "ارسال شد" : "خطا"));
+                    await load();
+                  }}
+                >
+                  ارسال برای بررسی بازار
+                </button>
+              </div>
+            </section>
+
+            <section className="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-sm text-blue-900 space-y-1">
+              <div className="font-bold">قواعد versionCode بازار</div>
+              <ul className="list-disc pr-5 text-xs space-y-1">
+                <li>هر بسته در یک رهانش versionCode یکتا</li>
+                <li>برای همان معماری، همیشه عدد بزرگ‌تر از قبل</li>
+                <li>ترتیب پیشنهادی: arm64-v8a &gt; armeabi-v7a &gt; ALL</li>
+                <li>ALL را همزمان با armeabi-v7a آپلود نکنید</li>
+              </ul>
+              <div className="text-xs mt-2 font-mono" dir="ltr">
+                پیشنهاد بعدی — ALL: {versionSuggested.ALL ?? "—"} | v7a:{" "}
+                {versionSuggested["armeabi-v7a"] ?? "—"} | v8a:{" "}
+                {versionSuggested["arm64-v8a"] ?? "—"}
+              </div>
+            </section>
+
+            <section className="bg-white rounded-2xl border p-5 space-y-3">
+              <h3 className="font-bold text-sm">ثبت نسخه جدید</h3>
+              <div className="grid md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">versionCode</label>
+                  <input
+                    type="number"
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                    value={verForm.versionCode}
+                    onChange={(e) =>
+                      setVerForm({ ...verForm, versionCode: Number(e.target.value) || 1 })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">versionName</label>
+                  <input
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                    value={verForm.versionName}
+                    onChange={(e) => setVerForm({ ...verForm, versionName: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">معماری CPU</label>
+                  <select
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                    value={verForm.architecture}
+                    onChange={(e) => {
+                      const a = e.target.value;
+                      setVerForm({
+                        ...verForm,
+                        architecture: a,
+                        versionCode: versionSuggested[a] || verForm.versionCode,
+                      });
+                    }}
+                  >
+                    <option value="ALL">ALL (universal)</option>
+                    <option value="armeabi-v7a">armeabi-v7a</option>
+                    <option value="arm64-v8a">arm64-v8a</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">تغییرات (فارسی)</label>
+                <textarea
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  rows={2}
+                  value={verForm.changelogFa}
+                  onChange={(e) => setVerForm({ ...verForm, changelogFa: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Changelog (EN)</label>
+                <textarea
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  rows={2}
+                  dir="ltr"
+                  value={verForm.changelogEn}
+                  onChange={(e) => setVerForm({ ...verForm, changelogEn: e.target.value })}
+                />
+              </div>
+              <button
+                className="bg-[#1565C0] text-white px-4 py-2 rounded-lg text-sm"
+                onClick={async () => {
+                  const res = await fetch("/api/admin/versions", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(verForm),
+                  });
+                  const d = await res.json();
+                  setMsg(d.ok ? "نسخه ثبت شد" : d.error || "خطا");
+                  await load();
+                }}
+              >
+                ثبت نسخه
+              </button>
+            </section>
+
+            <div className="space-y-2">
+              {versionsList.length === 0 && (
+                <p className="text-center text-slate-400 py-6">هنوز نسخه‌ای ثبت نشده</p>
+              )}
+              {versionsList.map((v: any) => (
+                <div
+                  key={v.id}
+                  className="bg-white border rounded-xl p-4 flex flex-wrap justify-between gap-2 items-start"
+                >
+                  <div>
+                    <div className="font-medium text-sm">
+                      {v.versionName}{" "}
+                      <span className="font-mono text-xs text-slate-500">
+                        code={v.versionCode} · {v.architecture}
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      وضعیت: {v.status} · minSdk {v.minSdk} · targetSdk {v.targetSdk}
+                    </div>
+                    {v.changelogFa && (
+                      <div className="text-xs text-slate-600 mt-1">{v.changelogFa}</div>
+                    )}
+                  </div>
+                  <div className="flex gap-2 flex-wrap">
+                    <select
+                      className="text-xs border rounded-lg px-2 py-1"
+                      value={v.status}
+                      onChange={async (e) => {
+                        await fetch("/api/admin/versions", {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ id: v.id, status: e.target.value }),
+                        });
+                        await load();
+                      }}
+                    >
+                      <option value="draft">پیش‌نویس</option>
+                      <option value="ready">آماده آپلود</option>
+                      <option value="uploaded">آپلود شده</option>
+                      <option value="in_review">در حال بررسی</option>
+                      <option value="published">منتشر شده</option>
+                      <option value="rejected">رد شده</option>
+                    </select>
+                    <button
+                      className="text-xs text-red-600 border border-red-200 px-2 py-1 rounded-lg"
+                      onClick={async () => {
+                        if (!confirm("حذف این رکورد نسخه؟")) return;
+                        await fetch("/api/admin/versions", {
+                          method: "DELETE",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ id: v.id }),
+                        });
+                        await load();
+                      }}
+                    >
+                      حذف
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
         ) : tab === "holidays" ? (
           <div className="space-y-4">
             <section className="bg-white rounded-2xl border p-5 space-y-3">
