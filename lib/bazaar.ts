@@ -111,7 +111,10 @@ export async function uploadPackage(
   }
 
   const form = new FormData();
-  const blob = new Blob([file], {
+  // تبدیل Buffer به Uint8Array تا با نوع BlobPart سازگار باشد
+  const bytes = new Uint8Array(file.byteLength);
+  bytes.set(file);
+  const blob = new Blob([bytes], {
     type: fileName.endsWith(".aab")
       ? "application/octet-stream"
       : "application/vnd.android.package-archive",
@@ -127,8 +130,6 @@ export async function uploadPackage(
       [cfg.apiKeyHeader || DEFAULT_HEADER]: cfg.apiKeyValue,
     },
     body: form,
-    // @ts-expect-error duplex not in all types
-    duplex: "half",
   });
   const raw = await res.text();
   let data: any = null;
