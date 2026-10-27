@@ -159,3 +159,16 @@ model AppVersion {
   @@index([status])
   @@index([versionCode])
 }
+
+/// تنظیمات هوش مصنوعی برای ثبت خودکار تایم‌شیت
+model AiConfig {
+  id           Int      @id @default(1)
+  apiUrl       String   @default("https://api.openai.com/v1")
+  apiKey       String   @default("")
+  model        String   @default("gpt-4o-mini")
+  systemPrompt String   @default("")
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+

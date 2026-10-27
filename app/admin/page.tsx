@@ -78,7 +78,7 @@ const emptyShiftForm = {
 
 export default function AdminPage() {
   const router = useRouter();
-  const [tab, setTab] = useState<"codes" | "shifts" | "users" | "chat" | "direct" | "holidays" | "versions">("shifts");
+  const [tab, setTab] = useState<"codes" | "shifts" | "users" | "chat" | "direct" | "holidays" | "versions" | "ai">("shifts");
   const [codes, setCodes] = useState<CodeRow[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [licenses, setLicenses] = useState<LicenseRow[]>([]);
@@ -117,6 +117,14 @@ export default function AdminPage() {
   const [holidayEndpoint, setHolidayEndpoint] = useState(
     "https://raw.githubusercontent.com/hasan-ahani/shamsi-holidays/main/holidays"
   );
+  const [aiForm, setAiForm] = useState({
+    apiUrl: "https://api.openai.com/v1",
+    apiKey: "",
+    model: "gpt-4o-mini",
+    systemPrompt: "",
+    enabled: true,
+  });
+  const [defaultAiRules, setDefaultAiRules] = useState("");
 
 
 
@@ -125,7 +133,7 @@ export default function AdminPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [cRes, sRes, lRes, chRes, vRes, bRes, hRes, dRes] = await Promise.all([
+      const [cRes, sRes, lRes, chRes, vRes, bRes, hRes, dRes, aiRes] = await Promise.all([
         fetch("/api/admin/codes"),
         fetch("/api/admin/shifts"),
         fetch("/api/admin/licenses"),
@@ -134,6 +142,7 @@ export default function AdminPage() {
         fetch("/api/admin/bazaar"),
         fetch("/api/admin/holidays"),
         fetch("/api/admin/chat?view=direct"),
+        fetch("/api/admin/ai"),
       ]);
       if ([cRes, sRes, lRes].some((r) => r.status === 401)) {
         router.push("/login");
@@ -147,6 +156,7 @@ export default function AdminPage() {
       const b = await bRes.json();
       const h = await hRes.json();
       const d = await dRes.json();
+      const ai = await aiRes.json();
       if (c.ok) setCodes(c.codes);
       if (s.ok) setShifts(s.shifts);
       if (l.ok) setLicenses(l.licenses);
@@ -169,6 +179,16 @@ export default function AdminPage() {
       }
       if (h.ok) setHolidaysList(h.holidays || []);
       if (d.ok) setDirectThreads(d.directThreads || []);
+      if (ai.ok && ai.aiConfig) {
+        setAiForm({
+          apiUrl: ai.aiConfig.apiUrl || "https://api.openai.com/v1",
+          apiKey: ai.aiConfig.apiKey || "",
+          model: ai.aiConfig.model || "gpt-4o-mini",
+          systemPrompt: ai.aiConfig.systemPrompt || ai.defaultRules || "",
+          enabled: ai.aiConfig.enabled !== false,
+        });
+        if (ai.defaultRules) setDefaultAiRules(ai.defaultRules);
+      }
     } finally {
       setLoading(false);
     }
@@ -380,6 +400,7 @@ export default function AdminPage() {
               ["direct", "گفتگوی کاربران"],
               ["holidays", "تعطیلات رسمی"],
               ["versions", "نسخه‌ها / بازار"],
+              ["ai", "هوش مصنوعی"],
             ] as const
           ).map(([k, label]) => (
             <button
@@ -1206,7 +1227,7 @@ export default function AdminPage() {
               </div>
             ))}
           </div>
-        ) : (
+        ) : tab === "chat" ? (
           <div className="grid md:grid-cols-3 gap-4 min-h-[420px]">
             <div className="bg-white rounded-xl border overflow-hidden">
               <div className="px-3 py-2 border-b text-sm font-medium bg-slate-50">گفتگوها</div>
@@ -1310,7 +1331,149 @@ export default function AdminPage() {
               )}
             </div>
           </div>
-        )}
+        ) : tab === "ai" ? (
+          <div className="space-y-4">
+            <section className="bg-white rounded-2xl border p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+                <div>
+                  <h3 className="font-bold text-base">تنظیمات هوش مصنوعی (ثبت خودکار تایم‌شیت)</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    تنظیمات اتصال به ارائه‌دهنده هوش مصنوعی و پرامپت قوانین ثبت ورک‌لاگ
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer bg-slate-50 px-3 py-1.5 rounded-xl border text-sm font-medium">
+                  <input
+                    type="checkbox"
+                    checked={aiForm.enabled}
+                    onChange={(e) => setAiForm({ ...aiForm, enabled: e.target.checked })}
+                    className="accent-[#1565C0] w-4 h-4"
+                  />
+                  <span>قابلیت هوش مصنوعی فعال باشد</span>
+                </label>
+              </div>
+
+              <div className="grid md:grid-cols-3 gap-3">
+                <div className="md:col-span-1">
+                  <label className="text-xs text-slate-600 block mb-1 font-medium">آدرس پایه API (Base URL)</label>
+                  <input
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                    dir="ltr"
+                    placeholder="https://api.openai.com/v1"
+                    value={aiForm.apiUrl}
+                    onChange={(e) => setAiForm({ ...aiForm, apiUrl: e.target.value })}
+                  />
+                  <span className="text-[11px] text-slate-400 mt-1 block">
+                    سازگار با استاندارد OpenAI (OpenRouter, Groq, DeepSeek و غیره)
+                  </span>
+                </div>
+
+                <div className="md:col-span-1">
+                  <label className="text-xs text-slate-600 block mb-1 font-medium">کلید API (API Key)</label>
+                  <input
+                    type="password"
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                    dir="ltr"
+                    placeholder="sk-••••••••••••••••••••••••••••••••"
+                    value={aiForm.apiKey}
+                    onChange={(e) => setAiForm({ ...aiForm, apiKey: e.target.value })}
+                  />
+                  <span className="text-[11px] text-slate-400 mt-1 block">
+                    کلید محرمانه برای فراخوانی مدل
+                  </span>
+                </div>
+
+                <div className="md:col-span-1">
+                  <label className="text-xs text-slate-600 block mb-1 font-medium">نام مدل (Model)</label>
+                  <input
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                    dir="ltr"
+                    placeholder="gpt-4o-mini"
+                    value={aiForm.model}
+                    onChange={(e) => setAiForm({ ...aiForm, model: e.target.value })}
+                  />
+                  <span className="text-[11px] text-slate-400 mt-1 block">
+                    مثال: gpt-4o-mini ، gpt-4o یا claude-3-5-sonnet
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="text-xs text-slate-700 block font-bold">
+                    قوانین و دستورالعمل ثبت ورک‌لاگ (پرامپت سیستمی)
+                  </label>
+                  <div className="flex gap-2">
+                    <label className="cursor-pointer inline-flex items-center gap-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-300 transition">
+                      <span>📁 بارگذاری فایل قوانین (.md یا .txt)</span>
+                      <input
+                        type="file"
+                        accept=".md,.txt,text/plain,text/markdown"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            const text = ev.target?.result;
+                            if (typeof text === "string" && text.trim()) {
+                              setAiForm((f) => ({ ...f, systemPrompt: text }));
+                              setMsg(`فایل ${file.name} با موفقیت بارگذاری شد`);
+                            }
+                          };
+                          reader.readAsText(file, "UTF-8");
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-300 transition"
+                      onClick={() => {
+                        if (defaultAiRules) {
+                          setAiForm((f) => ({ ...f, systemPrompt: defaultAiRules }));
+                          setMsg("پرامپت با قوانین پیش‌فرض دمیس جایگزین شد");
+                        }
+                      }}
+                    >
+                      ↺ بازنشانی به قوانین پیش‌فرض دمیس
+                    </button>
+                  </div>
+                </div>
+
+                <textarea
+                  className="w-full border rounded-xl p-3 text-xs font-mono leading-relaxed bg-slate-50 focus:bg-white transition"
+                  dir="rtl"
+                  rows={15}
+                  placeholder="دستورالعمل‌ها و قوانین هوش مصنوعی برای ثبت تایم‌شیت..."
+                  value={aiForm.systemPrompt}
+                  onChange={(e) => setAiForm({ ...aiForm, systemPrompt: e.target.value })}
+                />
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  className="bg-[#1565C0] hover:bg-blue-700 text-white font-medium px-5 py-2.5 rounded-xl text-sm transition shadow-sm"
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      const res = await fetch("/api/admin/ai", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(aiForm),
+                      });
+                      const d = await res.json();
+                      setMsg(d.ok ? "تنظیمات هوش مصنوعی با موفقیت ذخیره شد" : d.error || "خطا در ذخیره");
+                      await load();
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  ذخیره تنظیمات هوش مصنوعی
+                </button>
+              </div>
+            </section>
+          </div>
+        ) : null}
       </main>
 
       {editUser && (

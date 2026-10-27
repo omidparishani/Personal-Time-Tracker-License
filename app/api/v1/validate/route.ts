@@ -106,6 +106,8 @@ export async function POST(req: Request) {
           name: undefined,
         };
 
+    const aiCfg = await prisma.aiConfig.findFirst();
+
     return jsonOk({
       active: true,
       config: {
@@ -114,6 +116,9 @@ export async function POST(req: Request) {
           attendance: !!license.canAttendance,
           reports: !!license.canReports,
           support: !!license.canSupport,
+        },
+        ai: {
+          enabled: aiCfg ? !!aiCfg.enabled : true,
         },
         work: workFrom(workSource),
         username: license.username,
