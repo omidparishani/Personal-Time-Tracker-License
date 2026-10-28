@@ -108,7 +108,6 @@ model AuditLog {
   createdAt DateTime @default(now())
 }
 
-
 /// تعطیلات رسمی — از endpoint یا دستی
 model OfficialHoliday {
   id        String   @id @default(cuid())
@@ -120,7 +119,6 @@ model OfficialHoliday {
   @@unique([date])
   @@index([date])
 }
-
 
 /// تنظیمات اتصال به API پیشخان بازار
 model BazaarConfig {
@@ -168,7 +166,7 @@ model AiConfig {
   model        String   @default("gpt-4o-mini")
   systemPrompt String   @default("")
   enabled      Boolean  @default(true)
+  timeoutSeconds Int   @default(120)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
-

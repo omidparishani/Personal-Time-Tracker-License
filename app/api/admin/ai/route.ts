@@ -18,6 +18,7 @@ const updateSchema = z.object({
   model: z.string().min(1).default("gpt-4o-mini"),
   systemPrompt: z.string().default(""),
   enabled: z.boolean().default(true),
+  timeoutSeconds: z.number().min(5).max(3600).default(120),
 });
 
 export async function POST(req: Request) {

@@ -65,10 +65,52 @@ export async function getAiConfig() {
         model: "gpt-4o-mini",
         systemPrompt: DEFAULT_AI_RULES,
         enabled: true,
+        timeoutSeconds: 120,
       },
     });
   }
   return cfg;
+}
+
+export async function testAiConnection(cfgOverride?: {
+  apiUrl: string;
+  apiKey: string;
+  model: string;
+  timeoutSeconds?: number;
+}): Promise<{ ok: boolean; status?: number; latencyMs: number; message: string; model?: string }> {
+  const cfg = cfgOverride ? { ...cfgOverride, timeoutSeconds: cfgOverride.timeoutSeconds ?? 120 } : await getAiConfig();
+  if (!cfg.apiKey) {
+    return { ok: false, latencyMs: 0, message: "کلید API تنظیم نشده است" };
+  }
+  const endpoint = `${cfg.apiUrl.replace(/\/+$/, "")}/chat/completions`;
+  const start = Date.now();
+  const signal = AbortSignal.timeout((cfg.timeoutSeconds || 120) * 1000);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${cfg.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: cfg.model || "gpt-4o-mini",
+        messages: [{ role: "user", content: "Say 'OK' and nothing else." }],
+        max_tokens: 5,
+      }),
+      signal,
+    });
+    const latencyMs = Date.now() - start;
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      return { ok: false, status: response.status, latencyMs, message: `خطا ${response.status}: ${text.slice(0, 200)}` };
+    }
+    const data = await response.json();
+    const model = data.model || cfg.model;
+    return { ok: true, latencyMs, message: "اتصال موفق", model };
+  } catch (e: any) {
+    const latencyMs = Date.now() - start;
+    return { ok: false, latencyMs, message: e?.name === "TimeoutError" ? "تایم اوت شد" : (e?.message || "خطای نامConnections") };
+  }
 }
 
 export type CandidateTask = {

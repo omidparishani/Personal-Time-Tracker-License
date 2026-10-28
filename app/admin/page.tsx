@@ -123,7 +123,10 @@ export default function AdminPage() {
     model: "gpt-4o-mini",
     systemPrompt: "",
     enabled: true,
+    timeoutSeconds: 120,
   });
+  const [aiTestResult, setAiTestResult] = useState<{ ok: boolean; latencyMs: number; message: string; model?: string } | null>(null);
+  const [aiTesting, setAiTesting] = useState(false);
   const [defaultAiRules, setDefaultAiRules] = useState("");
 
 
@@ -186,6 +189,7 @@ export default function AdminPage() {
           model: ai.aiConfig.model || "gpt-4o-mini",
           systemPrompt: ai.aiConfig.systemPrompt || ai.defaultRules || "",
           enabled: ai.aiConfig.enabled !== false,
+          timeoutSeconds: ai.aiConfig.timeoutSeconds || 120,
         });
         if (ai.defaultRules) setDefaultAiRules(ai.defaultRules);
       }
@@ -1395,6 +1399,22 @@ export default function AdminPage() {
                     مثال: gpt-4o-mini ، gpt-4o یا claude-3-5-sonnet
                   </span>
                 </div>
+                <div className="md:col-span-1">
+                  <label className="text-xs text-slate-600 block mb-1 font-medium">تایم اوت (ثانیه)</label>
+                  <input
+                    type="number"
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                    dir="ltr"
+                    min="5"
+                    max="3600"
+                    placeholder="120"
+                    value={aiForm.timeoutSeconds}
+                    onChange={(e) => setAiForm({ ...aiForm, timeoutSeconds: Number(e.target.value) || 120 })}
+                  />
+                  <span className="text-[11px] text-slate-400 mt-1 block">
+                    ۳۰۰ ثانیه = ۵ دقیقه
+                  </span>
+                </div>
               </div>
 
               <div className="space-y-2 pt-2">
@@ -1469,6 +1489,39 @@ export default function AdminPage() {
                   }}
                 >
                   ذخیره تنظیمات هوش مصنوعی
+                </button>
+
+                <button
+                  className="bg-slate-600 hover:bg-slate-700 text-white font-medium px-5 py-2.5 rounded-xl text-sm transition shadow-sm"
+                  onClick={async () => {
+                    if (aiTesting) return;
+                    setAiTesting(true);
+                    try {
+                      const res = await fetch("/api/admin/ai/test", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          apiUrl: aiForm.apiUrl,
+                          apiKey: aiForm.apiKey,
+                          model: aiForm.model,
+                          timeoutSeconds: aiForm.timeoutSeconds,
+                        }),
+                      });
+                      const data = await res.json();
+                      if (data.ok) {
+                        setAiTestResult(data);
+                        setMsg(`✅ ${data.message} (${data.latencyMs}ms)`);
+                      } else {
+                        setMsg(`❌ ${data.error || data.message || "خطا"}`);
+                      }
+                    } catch (e) {
+                      setMsg(`❌ خطا: ${e instanceof Error ? e.message : "نامعلوم"}`);
+                    } finally {
+                      setAiTesting(false);
+                    }
+                  }}
+                >
+                  تست مدل
                 </button>
               </div>
             </section>
